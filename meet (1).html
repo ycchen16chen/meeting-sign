@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="zh-TW"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="referrer" content="no-referrer">
+<title>會議簽到</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=Noto+Serif+TC:wght@700;900&display=swap">
+<style>
+:root{--paper:#F4F5F8;--surface:#fff;--ink:#1B2333;--muted:#5D6779;--line:#D6DCE5;--accent:#23457A;--accent-soft:#E6ECF6;--seal:#C0392B;--seal-soft:#F7E4E0;
+  --f-display:"Noto Serif TC","PMingLiU",serif;--f-body:"Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--paper);color:var(--ink);font-family:var(--f-body);font-size:16px;line-height:1.6;padding:env(safe-area-inset-top,0) 0 env(safe-area-inset-bottom,0)}
+button,input{font:inherit;color:inherit}
+[hidden]{display:none!important}
+.wrap{max-width:560px;margin:0 auto;padding:18px max(16px,env(safe-area-inset-right,0px)) 40px max(16px,env(safe-area-inset-left,0px));display:flex;flex-direction:column;gap:14px}
+.head{background:var(--surface);border-bottom:1px solid var(--line)}
+.head .wrap{padding-bottom:16px;gap:4px}
+.eyebrow{color:var(--seal);font-weight:700;letter-spacing:.18em;font-size:.8rem}
+h1{font-family:var(--f-display);font-weight:900;font-size:1.4rem;line-height:1.35;margin:0}
+.where{color:var(--muted);font-size:.9rem}
+input[type=search],.fld input{width:100%;padding:12px 14px;border:1px solid #AEB8C7;border-radius:8px;background:var(--surface);font-size:1rem}
+.list{display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.list button{display:flex;justify-content:space-between;align-items:center;gap:10px;border:0;border-top:1px solid var(--line);background:none;padding:14px 16px;text-align:left;cursor:pointer;width:100%}
+.list button:first-child{border-top:0}
+.list button:active{background:var(--accent-soft)}
+.nm{font-family:var(--f-display);font-weight:700;font-size:1.15rem;letter-spacing:.06em}
+.un{color:var(--muted);font-size:.85rem}
+.go{color:var(--accent);font-size:.9rem;white-space:nowrap}
+.btn{border:1px solid #AEB8C7;background:var(--surface);border-radius:8px;padding:12px 16px;cursor:pointer;font-weight:500}
+.btn.seal{background:var(--seal);border-color:var(--seal);color:#fff;font-weight:700}
+.btn.link{border:0;background:none;color:var(--accent);text-decoration:underline;padding:6px 0;align-self:center}
+.row{display:flex;gap:10px}.row .btn{flex:1}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:16px;display:flex;flex-direction:column;gap:12px}
+.pad{position:relative;border:1px solid #AEB8C7;border-radius:8px;background:#fff;touch-action:none}
+.pad canvas{display:block;width:100%;height:200px}
+.pad .ph{position:absolute;inset:auto 0 12px;text-align:center;color:#9AA3B1;font-size:.85rem;pointer-events:none}
+.note{color:var(--muted);font-size:.82rem;margin:0}
+.lock{display:inline-flex;gap:6px;align-items:center;color:var(--accent);background:var(--accent-soft);border-radius:6px;padding:6px 10px;font-size:.82rem}
+.fld{display:flex;flex-direction:column;gap:4px;font-size:.85rem;color:var(--muted)}
+.done{text-align:center;align-items:center;padding:32px 16px}
+.stamp{border:3px solid var(--seal);color:var(--seal);border-radius:6px;padding:8px 22px;transform:rotate(-6deg);background:var(--seal-soft);display:inline-block}
+.stamp b{display:block;font-family:var(--f-display);font-weight:900;font-size:1.6rem;letter-spacing:.3em}
+.err{color:var(--seal)}
+.mine{background:var(--seal-soft);color:var(--seal);border-radius:8px;padding:10px 14px;font-size:.9rem}
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/forge/1.3.1/forge.min.js"></script>
+</head><body>
+<div class="head"><div class="wrap"><div class="eyebrow">會議簽到</div><h1 id="title">讀取中…</h1><div class="where" id="where"></div></div></div>
+<div class="wrap" id="app"><div class="card"><p class="note">正在讀取會議名單…</p></div></div>
+<script>
+/* ===== 共用：加密（node-forge）與 Firestore REST ===== */
+var COL_R = 'mt_roster', COL_C = 'mt_checkin';
+var CR = {
+  hex2bytes: function (h) { return forge.util.hexToBytes(h); },
+  randHex: function (n) { return forge.util.bytesToHex(forge.random.getBytesSync(n)); },
+  aesEnc: function (key, obj) {
+    var iv = forge.random.getBytesSync(12), c = forge.cipher.createCipher('AES-GCM', key);
+    c.start({ iv: iv }); c.update(forge.util.createBuffer(forge.util.encodeUtf8(JSON.stringify(obj)))); c.finish();
+    return { iv: forge.util.encode64(iv), ct: forge.util.encode64(c.output.getBytes() + c.mode.tag.getBytes()) };
+  },
+  aesDec: function (key, e) {
+    var raw = forge.util.decode64(e.ct), tag = raw.slice(-16), body = raw.slice(0, -16);
+    var d = forge.cipher.createDecipher('AES-GCM', key);
+    d.start({ iv: forge.util.decode64(e.iv), tag: forge.util.createBuffer(tag) }); d.update(forge.util.createBuffer(body));
+    if (!d.finish()) throw new Error('解密失敗：金鑰不符或資料遭竄改');
+    return JSON.parse(forge.util.decodeUtf8(d.output.getBytes()));
+  },
+  OAEP: function () { return { md: forge.md.sha256.create(), mgf1: { md: forge.md.sha256.create() } }; },
+  sealFor: function (pubPem, obj) {
+    var k = forge.random.getBytesSync(32), e = CR.aesEnc(k, obj);
+    var pub = forge.pki.publicKeyFromPem(pubPem);
+    e.wk = forge.util.encode64(pub.encrypt(k, 'RSA-OAEP', CR.OAEP()));
+    return e;
+  },
+  unseal: function (priv, e) {
+    var k = priv.decrypt(forge.util.decode64(e.wk), 'RSA-OAEP', CR.OAEP());
+    return CR.aesDec(k, e);
+  },
+  genRSA: function () {
+    return new Promise(function (ok, no) {
+      forge.pki.rsa.generateKeyPair({ bits: 2048, e: 0x10001 }, function (err, kp) {
+        if (err) return no(err);
+        ok({ pub: forge.pki.publicKeyToPem(kp.publicKey), priv: forge.pki.privateKeyToPem(kp.privateKey) });
+      });
+    });
+  }
+};
+var FS = {
+  base: function (p) { return 'https://firestore.googleapis.com/v1/projects/' + encodeURIComponent(p) + '/databases/(default)/documents'; },
+  toF: function (o) { var f = {}; Object.keys(o).forEach(function (k) { var v = o[k]; f[k] = typeof v === 'number' ? { integerValue: String(Math.round(v)) } : { stringValue: String(v) }; }); return f; },
+  fromF: function (f) { var o = {}; Object.keys(f || {}).forEach(function (k) { var v = f[k]; o[k] = 'integerValue' in v ? Number(v.integerValue) : 'stringValue' in v ? v.stringValue : null; }); return o; },
+  err: function (r) { return r.text().then(function (t) { var m = t; try { m = JSON.parse(t).error.message; } catch (e) {} throw new Error('雲端回應 ' + r.status + '：' + String(m).slice(0, 160)); }); },
+  add: function (p, col, data) {
+    return fetch(FS.base(p) + '/' + col, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields: FS.toF(data) }) })
+      .then(function (r) { return r.ok ? r.json() : FS.err(r); });
+  },
+  byMeeting: function (p, col, mid) {
+    var q = { structuredQuery: { from: [{ collectionId: col }], where: { fieldFilter: { field: { fieldPath: 'm' }, op: 'EQUAL', value: { stringValue: mid } } } } };
+    return fetch(FS.base(p) + ':runQuery', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(q) })
+      .then(function (r) { return r.ok ? r.json() : FS.err(r); })
+      .then(function (a) { return (a || []).filter(function (x) { return x.document; }).map(function (x) { var o = FS.fromF(x.document.fields); o._id = x.document.name.split('/').pop(); return o; }); });
+  }
+};
+
+(function(){
+var $ = function(s){ return document.querySelector(s); };
+var esc = function(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); };
+var hhmm = function(t){ var d = new Date(t), p = function(n){ return String(n).padStart(2,'0'); }; return p(d.getHours()) + ':' + p(d.getMinutes()); };
+function ls(k, v){ try { if (v === undefined) { var r = localStorage.getItem(k); return r ? JSON.parse(r) : null; } localStorage.setItem(k, JSON.stringify(v)); } catch(e){ return null; } }
+var DEF_PROJECT = 'meeting-sign-2781e';
+var h = (location.hash || '').slice(1).split('.'), MID = h[0], K = h[1], PROJECT = h[2] || DEF_PROJECT;
+var D = null, q = '';
+function fail(msg){ $('#title').textContent = '無法開啟簽到'; $('#app').innerHTML = '<div class="card"><p class="err">' + esc(msg) + '</p><p class="note">請重新掃描會場的 QR 碼，或洽詢會議工作人員。</p></div>'; }
+if (!window.forge) return fail('加密元件載入失敗，請確認手機已連上網路後重新整理。');
+if (!/^m[0-9a-f]{16}$/.test(MID || '') || !/^[0-9a-f]{32}$/.test(K || '')) return fail('簽到連結不完整。');
+
+FS.byMeeting(PROJECT, COL_R, MID).then(function(docs){
+  if (!docs.length) throw new Error('找不到這場會議的名單，可能主辦人尚未發布。');
+  var last = docs.sort(function(a, b){ return b.rev - a.rev; })[0];
+  D = CR.aesDec(CR.hex2bytes(K), last);
+  $('#title').textContent = D.title || '會議';
+  $('#where').textContent = [D.datetime, D.place].filter(Boolean).join('｜');
+  document.title = '簽到｜' + (D.title || '會議');
+  list();
+}).catch(function(e){ fail(e.message); });
+
+function mine(){ return (ls('ms.signed.' + MID) || []); }
+function list(){
+  var M = mine();
+  $('#app').innerHTML =
+    (M.length ? '<div class="mine">這支手機已送出：' + M.map(function(x){ return esc(x.name) + ' ' + hhmm(x.at); }).join('、') + '</div>' : '') +
+    '<input type="search" id="q" placeholder="輸入姓名搜尋" aria-label="搜尋姓名" autocomplete="off">' +
+    '<div class="list" id="list"></div>' +
+    '<button class="btn link" id="walk">名單上找不到我（現場加簽）</button>' +
+    '<span class="lock">🔒 簽名與時間會在這支手機上加密後才送出，只有主辦人能解開</span>';
+  $('#q').value = q;
+  $('#q').addEventListener('input', function(e){ q = e.target.value; draw(); });
+  $('#walk').onclick = function(){ sign(null); };
+  draw();
+}
+function draw(){
+  var qq = q.trim().toLowerCase();
+  var L = (D.people || []).filter(function(p){ return !qq || (p.name + p.unit).toLowerCase().indexOf(qq) >= 0; });
+  $('#list').innerHTML = L.length ? L.map(function(p){ return '<button data-sid="' + esc(p.sid) + '"><span><div class="nm">' + esc(p.name) + '</div><div class="un">' + esc(p.unit) + '</div></span><span class="go">簽到 ›</span></button>'; }).join('') : '<p class="note" style="padding:14px 16px">找不到「' + esc(q) + '」，可按下方「名單上找不到我」現場加簽。</p>';
+  document.querySelectorAll('#list button').forEach(function(b){ b.onclick = function(){ sign(D.people.find(function(p){ return p.sid === b.dataset.sid; })); }; });
+}
+function sign(p){
+  window.scrollTo(0, 0);
+  $('#app').innerHTML = '<div class="card">' +
+    (p ? '<div><div class="nm" style="font-size:1.5rem">' + esc(p.name) + '</div><div class="un">' + esc(p.unit) + '</div></div>'
+       : '<label class="fld">姓名<input id="wName" autocomplete="name"></label><label class="fld">單位／職稱<input id="wUnit"></label>') +
+    '<div class="pad"><canvas id="cv"></canvas><div class="ph" id="ph">請用手指在框內簽名</div></div>' +
+    '<p class="note err" id="msg"></p>' +
+    '<div class="row"><button class="btn" id="back">返回</button><button class="btn" id="clr">清除</button><button class="btn seal" id="ok">確認簽到</button></div></div>';
+  var cv = $('#cv'), ctx = cv.getContext('2d'), drawn = false, drawing = false;
+  requestAnimationFrame(function(){ var r = cv.getBoundingClientRect(), d = window.devicePixelRatio || 1; cv.width = r.width * d; cv.height = r.height * d; ctx.setTransform(d,0,0,d,0,0); ctx.lineWidth = 2.6; ctx.lineCap = ctx.lineJoin = 'round'; ctx.strokeStyle = '#141B29'; });
+  var pt = function(e){ var r = cv.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+  cv.addEventListener('pointerdown', function(e){ drawing = true; cv.setPointerCapture(e.pointerId); ctx.beginPath(); var a = pt(e); ctx.moveTo(a[0], a[1]); e.preventDefault(); });
+  cv.addEventListener('pointermove', function(e){ if (!drawing) return; var a = pt(e); ctx.lineTo(a[0], a[1]); ctx.stroke(); drawn = true; $('#ph').hidden = true; });
+  ['pointerup','pointercancel'].forEach(function(t){ cv.addEventListener(t, function(){ drawing = false; }); });
+  $('#clr').onclick = function(){ ctx.clearRect(0, 0, cv.width, cv.height); drawn = false; $('#ph').hidden = false; };
+  $('#back').onclick = list;
+  $('#ok').onclick = function(){
+    var name = p ? p.name : $('#wName').value.trim(), unit = p ? p.unit : $('#wUnit').value.trim();
+    if (!name) { $('#msg').textContent = '請輸入姓名'; return $('#wName').focus(); }
+    if (!drawn) { $('#msg').textContent = '請先簽名'; return; }
+    var o = document.createElement('canvas'); o.width = 320; o.height = Math.round(320 * cv.height / cv.width);
+    var c2 = o.getContext('2d'); c2.fillStyle = '#fff'; c2.fillRect(0, 0, o.width, o.height); c2.drawImage(cv, 0, 0, o.width, o.height);
+    var at = Date.now(), payload = { sid:p ? p.sid : null, name:name, unit:unit, sig:o.toDataURL('image/jpeg', .6), at:at };
+    var btn = $('#ok'); btn.disabled = true; btn.textContent = '加密送出中…'; $('#msg').textContent = '';
+    var e;
+    try { e = CR.sealFor(D.pub, payload); } catch(err){ btn.disabled = false; btn.textContent = '確認簽到'; $('#msg').textContent = '加密失敗：' + err.message; return; }
+    FS.add(PROJECT, COL_C, { m:MID, iv:e.iv, wk:e.wk, ct:e.ct, t:at }).then(function(){
+      var M = mine(); M.push({ name:name, at:at }); ls('ms.signed.' + MID, M);
+      $('#app').innerHTML = '<div class="card done"><div class="stamp"><b>已簽到</b>' + hhmm(at) + '</div><div class="nm" style="font-size:1.4rem">' + esc(name) + '</div><p class="note">簽到資料已加密送出，謝謝。可以關閉這個頁面。</p><button class="btn link" id="again">幫其他人簽到</button></div>';
+      $('#again').onclick = function(){ q = ''; list(); };
+    }).catch(function(err){ btn.disabled = false; btn.textContent = '重新送出'; $('#msg').textContent = '送出失敗（' + err.message + '），請確認網路後再按一次。'; });
+  };
+}
+})();
+</script>
+</body></html>
