@@ -199,7 +199,7 @@ FS.byMeeting(PROJECT, COL_R, MID).then(function(docs){
   $('#title').textContent = D.title || '會議';
   $('#where').textContent = [D.datetime, D.place].filter(Boolean).join('｜');
   document.title = (MK ? '會議紀錄｜' : '簽到｜') + (D.title || '會議');
-  var purged = purgeRevoked(D.revoked);
+  var purged = purgeRevoked(D.revoked); purgeStale(D.people);
   if (MK) minutes(); else { list(); if (purged) { var nt = document.createElement('p'); nt.className = 'note'; nt.style.textAlign = 'center'; nt.textContent = '主辦人已撤銷部分電子印章授權，這支手機記住的印章已清除。'; $('#app').prepend(nt); } }
 }).catch(function(e){ fail(e.message); });
 
@@ -340,6 +340,10 @@ function purgeRevoked(rv){
   if (T2.length !== T.length) { ls('ms.tok', T2); n += T.length - T2.length; }
   return n;
 }
+function sameNm(a, b){ return !!(a && b && (a === b || a.indexOf(b) === 0 || b.indexOf(a) === 0)); }
+function dropTok(name){ ls('ms.tok', toks().filter(function(x){ return !sameNm(x.name, name); })); }
+// 主辦端的印章比這支手機記住的新（例如在電腦上重拍）→ 清掉手機上的舊印章
+function purgeStale(people){ var o = myStamps(), n = 0; (people || []).forEach(function(p){ if (!p.stAt) return; Object.keys(o).forEach(function(k){ if (sameNm(k, p.name) && (+o[k].at || 0) < p.stAt - 2000) { delete o[k]; n++; } }); }); if (n) ls('ms.stamps', o); return n; }
 function myStamps(){ return ls('ms.stamps') || {}; }
 function myStamp(name){ var o = myStamps(); if (o[name]) return o[name]; var k = Object.keys(o).find(function(x){ return x && name && (x.indexOf(name) === 0 || name.indexOf(x) === 0); }); return k ? o[k] : null; }
 function saveMyStamp(name, rec){ var o = myStamps(); if (rec) o[name] = rec; else delete o[name]; ls('ms.stamps', o); }
@@ -442,18 +446,18 @@ function stampArea(p){
     if (mine) {
       box.innerHTML = '<div class="stampbox"><div class="row1"><b>🔴 我的電子印章</b><img class="stp" alt="印章" src="' + mine.img + '"></div>' +
         '<label class="cons"><input type="checkbox" id="stUse" checked><span>我是 <b></b> 本人（或經本人授權），同意本次以此印章代替簽名。</span></label>' +
-        '<button class="btn seal" id="stGo" style="width:100%">🔴 蓋我的電子印章</button><button class="btn link" id="stRedo">更換印章</button></div>' +
+        '<button class="btn seal" id="stGo" style="width:100%">🔴 蓋我的電子印章</button><button class="btn link" id="stRedo">🗑 刪除這個印章，重新拍照註冊</button></div>' +
         '<p class="note" style="text-align:center;margin:0">或在下方手寫簽名</p>';
       box.querySelector('.cons b').textContent = n;
       $('#stUse').onchange = function(){ $('#stGo').disabled = !this.checked; };
       $('#stGo').onclick = function(){ send(mine, this); };
-      $('#stRedo').onclick = function(){ form(); };
+      $('#stRedo').onclick = function(){ if (!confirm('刪除這支手機記住的「' + n + '」印章，改為重新拍照註冊？')) return; saveMyStamp(n, null); Object.keys(myStamps()).forEach(function(k){ if (sameNm(k, n)) saveMyStamp(k, null); }); dropTok(n); form(); };
       return;
     }
     if (card) {
-      box.innerHTML = '<button class="btn seal" id="stCard" style="width:100%">🔴 蓋我的電子印章（QR 簽到卡）</button><button class="btn link" id="stNew">改用手機拍照建立印章</button><p class="note" style="text-align:center;margin:0">或在下方手寫簽名</p>';
+      box.innerHTML = '<button class="btn seal" id="stCard" style="width:100%">🔴 蓋我的電子印章（QR 簽到卡）</button><button class="btn link" id="stNew">🗑 不用這張卡，重新拍照註冊印章</button><p class="note" style="text-align:center;margin:0">或在下方手寫簽名</p>';
       $('#stCard').onclick = function(){ stampSign(p, this); };
-      $('#stNew').onclick = function(){ form(); };
+      $('#stNew').onclick = function(){ if (!confirm('這支手機將不再使用 QR 簽到卡，改為重新拍照註冊印章？')) return; dropTok(p.name); form(); };
       return;
     }
     box.innerHTML = '<button class="btn seal" id="stOpen" style="width:100%">🔴 電子印章簽到（用手機拍印章）</button>' +
