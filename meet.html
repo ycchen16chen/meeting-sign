@@ -84,6 +84,7 @@ var CR = {
     var k = priv.decrypt(forge.util.decode64(e.wk), 'RSA-OAEP', CR.OAEP());
     return CR.aesDec(k, e);
   },
+  proof: function (tok, mid) { var md = forge.md.sha256.create(); md.update(String(tok).toUpperCase() + '|' + mid, 'utf8'); return md.digest().toHex(); },
   genRSA: function () {
     var sub = window.crypto && window.crypto.subtle;
     var pem = function (buf, label) { var b = forge.util.encode64(String.fromCharCode.apply(null, new Uint8Array(buf))).match(/.{1,64}/g).join('\n'); return '-----BEGIN ' + label + '-----\n' + b + '\n-----END ' + label + '-----'; };
@@ -159,6 +160,20 @@ var hhmm = function(t){ var d = new Date(t), p = function(n){ return String(n).p
 function ls(k, v){ try { if (v === undefined) { var r = localStorage.getItem(k); return r ? JSON.parse(r) : null; } localStorage.setItem(k, JSON.stringify(v)); } catch(e){ return null; } }
 var DEF_PROJECT = 'meeting-sign-2781e';
 var raw = (location.hash || '').slice(1), MK = null;
+function toks(){ return ls('ms.tok') || []; }
+function tokFor(name){ var t = toks().find(function(x){ return x.name === name || (x.name && name && (x.name.indexOf(name) === 0 || name.indexOf(x.name) === 0)); }); return t ? t.tok : null; }
+function addTok(name, tok){ var L = toks().filter(function(x){ return x.name !== name; }); L.push({ name:name, tok:String(tok).toUpperCase(), at:Date.now() }); return ls('ms.tok', L) !== null || toks().length; }
+var bm = raw.match(/^s\.([0-9A-Za-z]{12})\.(.+)$/);
+if (bm) {
+  var bname = ''; try { bname = decodeURIComponent(bm[2]); } catch(e){ bname = bm[2]; }
+  var ok0 = addTok(bname, bm[1]);
+  $('#title').textContent = '電子印章 QR 簽到卡';
+  document.querySelector('.eyebrow').textContent = '電子印章登錄';
+  $('#app').innerHTML = !ok0 ? '<div class="card"><p class="err">這支手機的瀏覽器不允許儲存資料（可能是無痕模式），無法完成登錄。請改用一般模式開啟。</p></div>'
+    : '<div class="card done"><div class="stamp"><b>已登錄</b></div><div class="nm" style="font-size:1.4rem">' + esc(bname) + '</div><p class="note">這支手機已登錄你的電子印章 QR 簽到卡。之後開會掃會議簽到 QR Code、點自己的名字，就可以「蓋我的電子印章」。</p><p class="note err">請只在本人的手機上掃描，卡片請妥善保管。</p></div>';
+  try { history.replaceState(null, '', location.pathname); } catch(e){}
+  return;
+}
 if (raw.indexOf('~') >= 0) { MK = raw.split('~')[1]; raw = raw.split('~')[0]; }
 var h = raw.split('.'), MID = h[0], K = h[1], PROJECT = h[2] || DEF_PROJECT;
 var D = null, q = '';
@@ -181,6 +196,7 @@ function list(){
   var M = mine();
   $('#app').innerHTML =
     (M.length ? '<div class="mine">這支手機已送出：' + M.map(function(x){ return esc(x.name); }).join('、') + '</div>' : '') +
+    (D.people || []).filter(function(p){ return tokFor(p.name); }).map(function(p){ return '<button class="btn seal" data-quick="' + esc(p.sid) + '" style="width:100%">我是 ' + esc(p.name) + '・蓋我的電子印章</button>'; }).join('') +
     '<input type="search" id="q" placeholder="輸入姓名搜尋" aria-label="搜尋姓名" autocomplete="off">' +
     '<div class="list" id="list"></div>' +
     '<button class="btn link" id="walk">名單上找不到我（現場加簽）</button>' +
@@ -188,6 +204,7 @@ function list(){
   $('#q').value = q;
   $('#q').addEventListener('input', function(e){ q = e.target.value; draw(); });
   $('#walk').onclick = function(){ sign(null); };
+  document.querySelectorAll('[data-quick]').forEach(function(b){ b.onclick = function(){ var p = D.people.find(function(x){ return x.sid === b.dataset.quick; }); if (p) stampSign(p, b); }; });
   draw();
 }
 function draw(){
@@ -201,6 +218,9 @@ function sign(p){
   $('#app').innerHTML = '<div class="card">' +
     (p ? '<div><div class="nm" style="font-size:1.5rem">' + esc(p.name) + '</div><div class="un">' + esc(p.unit) + '</div></div>'
        : '<label class="fld">姓名<input id="wName" autocomplete="name"></label><label class="fld">單位／職稱<input id="wUnit"></label>') +
+    (p ? (tokFor(p.name)
+      ? '<button class="btn seal" id="useSt" style="width:100%">🔴 蓋我的電子印章</button><p class="note" style="text-align:center;margin:0">或在下方手寫簽名</p>'
+      : '<details class="note" id="stReg"><summary style="cursor:pointer;color:var(--accent)">我有電子印章 QR 簽到卡</summary><div style="display:flex;flex-direction:column;gap:8px;margin-top:8px"><span>請輸入卡片上的 12 碼代碼（或先用手機相機掃描卡片完成登錄，再回到這裡）：</span><input id="stCode" maxlength="15" autocapitalize="characters" autocomplete="off" placeholder="例如 AB12 CD34 EF56" style="padding:12px 14px;border:1px solid #AEB8C7;border-radius:8px;font-size:1.05rem;letter-spacing:.08em;text-transform:uppercase"><button class="btn seal" id="stCodeGo">登錄並蓋章簽到</button></div></details>') : '') +
     '<div class="pad"><canvas id="cv"></canvas><div class="ph" id="ph">請用手指在框內簽名</div></div>' +
     '<p class="note err" id="msg"></p>' +
     '<div class="row"><button class="btn" id="back">返回</button><button class="btn" id="clr">清除</button><button class="btn seal" id="ok">確認簽到</button></div></div>';
@@ -212,6 +232,8 @@ function sign(p){
   ['pointerup','pointercancel'].forEach(function(t){ cv.addEventListener(t, function(){ drawing = false; }); });
   $('#clr').onclick = function(){ ctx.clearRect(0, 0, cv.width, cv.height); drawn = false; $('#ph').hidden = false; };
   $('#back').onclick = list;
+  if ($('#useSt')) $('#useSt').onclick = function(){ stampSign(p, this); };
+  if ($('#stCodeGo')) $('#stCodeGo').onclick = function(){ var c = $('#stCode').value.replace(/[\s-]/g, '').toUpperCase(); if (!/^[0-9A-Z]{12}$/.test(c)) { $('#msg').textContent = '代碼是 12 個英數字，請再確認。'; return; } addTok(p.name, c); stampSign(p, this); };
   $('#ok').onclick = function(){
     var name = p ? p.name : $('#wName').value.trim(), unit = p ? p.unit : $('#wUnit').value.trim();
     if (!name) { $('#msg').textContent = '請輸入姓名'; return $('#wName').focus(); }
@@ -219,15 +241,23 @@ function sign(p){
     var o = document.createElement('canvas'); o.width = 320; o.height = Math.round(320 * cv.height / cv.width);
     var c2 = o.getContext('2d'); c2.fillStyle = '#fff'; c2.fillRect(0, 0, o.width, o.height); c2.drawImage(cv, 0, 0, o.width, o.height);
     var at = Date.now(), payload = { sid:p ? p.sid : null, name:name, unit:unit, sig:o.toDataURL('image/jpeg', .6), at:at };
-    var btn = $('#ok'); btn.disabled = true; btn.textContent = '加密送出中…'; $('#msg').textContent = '';
-    var e;
-    try { e = CR.sealFor(D.pub, payload); } catch(err){ btn.disabled = false; btn.textContent = '確認簽到'; $('#msg').textContent = '加密失敗：' + err.message; return; }
-    FS.add(PROJECT, COL_C, { m:MID, iv:e.iv, wk:e.wk, ct:e.ct, t:at }).then(function(){
-      var M = mine(); M.push({ name:name, at:at }); ls('ms.signed.' + MID, M);
-      $('#app').innerHTML = '<div class="card done"><div class="stamp"><b>已簽到</b></div><div class="nm" style="font-size:1.4rem">' + esc(name) + '</div><p class="note">簽到資料已加密送出，謝謝。可以關閉這個頁面。</p><button class="btn link" id="again">幫其他人簽到</button></div>';
-      $('#again').onclick = function(){ q = ''; list(); };
-    }).catch(function(err){ btn.disabled = false; btn.textContent = '重新送出'; $('#msg').textContent = '送出失敗（' + err.message + '），請確認網路後再按一次。'; });
+    submit(payload, name, $('#ok'), '確認簽到');
   };
+}
+function stampSign(p, btn){
+  var tok = tokFor(p.name); if (!tok) return;
+  submit({ sid:p.sid, name:p.name, unit:p.unit, stamp:CR.proof(tok, MID), at:Date.now() }, p.name, btn, btn.textContent, true);
+}
+function submit(payload, name, btn, label, isStamp){
+  btn.disabled = true; btn.textContent = '加密送出中…'; var msg = $('#msg'); if (msg) msg.textContent = '';
+  var e;
+  try { e = CR.sealFor(D.pub, payload); } catch(err){ btn.disabled = false; btn.textContent = label; if (msg) msg.textContent = '加密失敗：' + err.message; return; }
+  FS.add(PROJECT, COL_C, { m:MID, iv:e.iv, wk:e.wk, ct:e.ct, t:payload.at }).then(function(){
+    var M = mine(); M.push({ name:name, at:payload.at }); ls('ms.signed.' + MID, M);
+    window.scrollTo(0, 0);
+    $('#app').innerHTML = '<div class="card done"><div class="stamp"><b>' + (isStamp ? '已蓋章' : '已簽到') + '</b></div><div class="nm" style="font-size:1.4rem">' + esc(name) + '</div><p class="note">' + (isStamp ? '已送出電子印章簽到，主辦端驗證後會帶入你的印章。' : '簽到資料已加密送出，謝謝。') + '可以關閉這個頁面。</p><button class="btn link" id="again">幫其他人簽到</button></div>';
+    $('#again').onclick = function(){ q = ''; list(); };
+  }).catch(function(err){ btn.disabled = false; btn.textContent = '重新送出'; if (msg) msg.textContent = '送出失敗（' + err.message + '），請確認網路後再按一次。'; });
 }
 
 /* ===== 手機填寫會議紀録 ===== */
