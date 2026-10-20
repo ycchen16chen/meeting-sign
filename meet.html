@@ -205,15 +205,22 @@ FS.byMeeting(PROJECT, COL_R, MID).then(function(docs){
 var CUR_DEP = '', DEF_DEPS = ['胸腔部','護理部','藥劑部','肺功能','營養部','其他部科'];
 function depList(){ return (D && Array.isArray(D.deps) && D.deps.length) ? D.deps : DEF_DEPS; }
 function guessDep(p){ if (!p) return ''; var L = depList(); if (p.dep && L.indexOf(p.dep) >= 0) return p.dep; return L.find(function(d){ return String(p.unit || '').indexOf(d) >= 0; }) || ''; }
+var CUR_CODE = '';
+function codeKey(p){ return 'ms.code.' + (p ? p.name : '_walk'); }
 function pickDep(p, next, goLabel){
   window.scrollTo(0, 0);
-  var g = guessDep(p);
-  $('#app').innerHTML = '<div class="card"><div class="step">步驟 1／2</div><h2 style="margin:0;font-size:1.25rem">請選擇隸屬科部</h2>' +
-    (p ? '<div class="nm" style="font-size:1.3rem">' + esc(p.name) + '</div>' : '<p class="note" style="margin:0">現場加簽：先選科部，再填姓名與燈號</p>') +
+  var g = guessDep(p), saved = ls(codeKey(p)) || '';
+  $('#app').innerHTML = '<div class="card"><div class="step">步驟 1／2</div>' +
+    (p ? '<div class="nm" style="font-size:1.3rem">' + esc(p.name) + '</div>' : '<p class="note" style="margin:0">現場加簽：先填燈號、選科部，下一步再填姓名</p>') +
+    '<label class="fld">燈號<input id="dCode" maxlength="8" autocapitalize="characters" autocomplete="off" inputmode="text" placeholder="例：DOC1234A" style="text-transform:uppercase" value="' + esc(saved) + '"></label>' +
+    '<h2 style="margin:0;font-size:1.15rem">請選擇隸屬科部</h2>' +
     '<div class="deps">' + depList().map(function(d){ return '<button class="btn dep' + (d === g ? ' on' : '') + '" data-d="' + esc(d) + '">' + esc(d) + '</button>'; }).join('') + '</div>' +
     '<p class="note err" id="msg"></p><div class="row"><button class="btn" id="back">返回</button></div></div>';
   $('#back').onclick = list;
-  document.querySelectorAll('.dep').forEach(function(b){ b.onclick = function(){ CUR_DEP = b.dataset.d; next(b); }; });
+  document.querySelectorAll('.dep').forEach(function(b){ b.onclick = function(){
+    var c = $('#dCode').value.replace(/[^0-9A-Za-z]/g, '').toUpperCase().slice(0, 8);
+    if (!c) { $('#msg').textContent = '請先輸入燈號'; $('#dCode').focus(); return; }
+    CUR_CODE = c; ls(codeKey(p), c); CUR_DEP = b.dataset.d; next(b); }; });
 }
 function mine(){ return (ls('ms.signed.' + MID) || []); }
 function list(){
@@ -241,9 +248,9 @@ function draw(){
 }
 function sign(p){
   window.scrollTo(0, 0);
-  $('#app').innerHTML = '<div class="card"><div class="step">步驟 2／2・隸屬：<b>' + esc(CUR_DEP) + '</b> <a href="#" id="chDep">更改</a></div>' +
+  $('#app').innerHTML = '<div class="card"><div class="step">步驟 2／2・燈號：<b>' + esc(CUR_CODE) + '</b>・隸屬：<b>' + esc(CUR_DEP) + '</b> <a href="#" id="chDep">更改</a></div>' +
     (p ? '<div><div class="nm" style="font-size:1.5rem">' + esc(p.name) + '</div><div class="un">' + esc(p.unit) + '</div></div>'
-       : '<label class="fld">姓名<input id="wName" autocomplete="name"></label><label class="fld">燈號<input id="wUnit" maxlength="8" autocapitalize="characters" autocomplete="off" placeholder="例：DOC1234A" style="text-transform:uppercase"></label>') +
+       : '<label class="fld">姓名<input id="wName" autocomplete="name"></label>') +
     '<div id="stArea"></div>' +
     '<div class="pad"><canvas id="cv"></canvas><div class="ph" id="ph">請用手指在框內簽名</div></div>' +
     '<p class="note err" id="msg"></p>' +
@@ -274,7 +281,7 @@ function stampSign(p, btn){
 }
 function submit(payload, name, btn, label, isStamp){
   if (CUR_DEP) payload.dep = CUR_DEP;
-  if (!payload.sid && $('#wUnit')) payload.code = $('#wUnit').value.replace(/\s/g, '').toUpperCase().slice(0, 8);
+  if (CUR_CODE) payload.code = CUR_CODE;
   btn.disabled = true; btn.textContent = '加密送出中…'; var msg = $('#msg'); if (msg) msg.textContent = '';
   var e;
   try { e = CR.sealFor(D.pub, payload); } catch(err){ btn.disabled = false; btn.textContent = label; if (msg) msg.textContent = '加密失敗：' + err.message; return; }
