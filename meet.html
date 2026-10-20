@@ -41,6 +41,14 @@ input[type=search],.fld input{width:100%;padding:12px 14px;border:1px solid #AEB
 .stamp{border:3px solid var(--seal);color:var(--seal);border-radius:6px;padding:8px 22px;transform:rotate(-6deg);background:var(--seal-soft);display:inline-block}
 .stamp b{display:block;font-family:var(--f-display);font-weight:900;font-size:1.6rem;letter-spacing:.3em}
 .err{color:var(--seal)}
+.item{display:flex;flex-direction:column;gap:10px}
+.item .no{font-family:var(--f-display);font-weight:900;color:var(--accent)}
+.fld textarea{width:100%;min-height:5.5em;padding:10px 12px;border:1px solid #AEB8C7;border-radius:8px;background:#fff;font:inherit;font-size:1rem;resize:vertical}
+.fld .lab{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.mic{border:1px solid #AEB8C7;background:#fff;border-radius:999px;padding:4px 12px;font-size:.9rem;cursor:pointer}
+.mic.on{background:var(--seal);border-color:var(--seal);color:#fff}
+.bar{position:sticky;bottom:0;background:var(--surface);border-top:1px solid var(--line);padding:10px max(16px,env(safe-area-inset-right,0px)) calc(10px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px));display:flex;gap:10px;align-items:center;justify-content:space-between}
+.bar .st{font-size:.85rem;color:var(--muted)}
 .mine{background:var(--seal-soft);color:var(--seal);border-radius:8px;padding:10px 14px;font-size:.9rem}
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/forge/1.3.1/forge.min.js"></script>
@@ -49,7 +57,7 @@ input[type=search],.fld input{width:100%;padding:12px 14px;border:1px solid #AEB
 <div class="wrap" id="app"><div class="card"><p class="note">正在讀取會議名單…</p></div></div>
 <script>
 /* ===== 共用：加密（node-forge）與 Firestore REST ===== */
-var COL_R = 'mt_roster', COL_C = 'mt_checkin';
+var COL_R = 'mt_roster', COL_C = 'mt_checkin', COL_D = 'mt_mdraft', COL_M = 'mt_minutes';
 var CR = {
   hex2bytes: function (h) { return forge.util.hexToBytes(h); },
   randHex: function (n) { return forge.util.bytesToHex(forge.random.getBytesSync(n)); },
@@ -77,6 +85,15 @@ var CR = {
     return CR.aesDec(k, e);
   },
   genRSA: function () {
+    var sub = window.crypto && window.crypto.subtle;
+    var pem = function (buf, label) { var b = forge.util.encode64(String.fromCharCode.apply(null, new Uint8Array(buf))).match(/.{1,64}/g).join('\n'); return '-----BEGIN ' + label + '-----\n' + b + '\n-----END ' + label + '-----'; };
+    if (sub) return sub.generateKey({ name:'RSA-OAEP', modulusLength:2048, publicExponent:new Uint8Array([1,0,1]), hash:'SHA-256' }, true, ['encrypt','decrypt'])
+      .then(function (kp) { return Promise.all([sub.exportKey('spki', kp.publicKey), sub.exportKey('pkcs8', kp.privateKey)]); })
+      .then(function (r) { return { pub: pem(r[0], 'PUBLIC KEY'), priv: pem(r[1], 'PRIVATE KEY') }; })
+      .catch(function () { return CR.genRSAforge(); });
+    return CR.genRSAforge();
+  },
+  genRSAforge: function () {
     return new Promise(function (ok, no) {
       forge.pki.rsa.generateKeyPair({ bits: 2048, e: 0x10001 }, function (err, kp) {
         if (err) return no(err);
@@ -102,17 +119,52 @@ var FS = {
   }
 };
 
+/* ===== 語音轉文字（Chrome / Edge / Android Chrome / iOS Safari） ===== */
+var MIC = {
+  cur: null,
+  ok: function () { return !!(window.SpeechRecognition || window.webkitSpeechRecognition) && window.isSecureContext !== false; },
+  toggle: function (btn, target, onState) {
+    if (MIC.cur) { var same = MIC.cur.btn === btn; MIC.stop(); if (same) return; }
+    var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { if (onState) onState('unsupported'); return; }
+    var r = new SR(), base = target.value, fin = '';
+    r.lang = 'zh-TW'; r.continuous = true; r.interimResults = true;
+    var put = function (s) { target.value = s; target.dispatchEvent(new Event('input', { bubbles: true })); };
+    r.onresult = function (e) {
+      var interim = '';
+      for (var i = e.resultIndex; i < e.results.length; i++) { var t = e.results[i][0].transcript; if (e.results[i].isFinal) fin += t; else interim += t; }
+      put(base + fin + interim);
+    };
+    r.onerror = function (e) { if (e.error === 'no-speech' || e.error === 'aborted') return; if (MIC.cur && MIC.cur.r === r) MIC.cur.want = false; if (onState) onState('error', e.error); };
+    r.onend = function () {
+      if (!MIC.cur || MIC.cur.r !== r) return;
+      if (MIC.cur.want) { base = base + fin; fin = ''; try { r.start(); return; } catch (x) {} }
+      put(base + fin); btn.classList.remove('on'); MIC.cur = null; if (onState) onState('stop');
+    };
+    MIC.cur = { r: r, btn: btn, want: true }; btn.classList.add('on');
+    try { r.start(); if (onState) onState('start'); } catch (x) { MIC.cur = null; btn.classList.remove('on'); if (onState) onState('error', x.message); }
+  },
+  stop: function () { if (!MIC.cur) return; MIC.cur.want = false; try { MIC.cur.r.stop(); } catch (e) {} },
+  msg: function (state, err) {
+    if (state === 'unsupported') return '這個瀏覽器不支援語音輸入，請改用 Chrome，或用手機鍵盤上的麥克風輸入。';
+    if (state === 'error') return err === 'not-allowed' || err === 'service-not-allowed' ? '麥克風權限被拒絕，請在網址列允許使用麥克風。' : err === 'network' ? '語音轉文字需要連上網路。' : '語音輸入中斷（' + err + '）';
+    return '';
+  }
+};
+
 (function(){
 var $ = function(s){ return document.querySelector(s); };
 var esc = function(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); };
 var hhmm = function(t){ var d = new Date(t), p = function(n){ return String(n).padStart(2,'0'); }; return p(d.getHours()) + ':' + p(d.getMinutes()); };
 function ls(k, v){ try { if (v === undefined) { var r = localStorage.getItem(k); return r ? JSON.parse(r) : null; } localStorage.setItem(k, JSON.stringify(v)); } catch(e){ return null; } }
 var DEF_PROJECT = 'meeting-sign-2781e';
-var h = (location.hash || '').slice(1).split('.'), MID = h[0], K = h[1], PROJECT = h[2] || DEF_PROJECT;
+var raw = (location.hash || '').slice(1), MK = null;
+if (raw.indexOf('~') >= 0) { MK = raw.split('~')[1]; raw = raw.split('~')[0]; }
+var h = raw.split('.'), MID = h[0], K = h[1], PROJECT = h[2] || DEF_PROJECT;
 var D = null, q = '';
 function fail(msg){ $('#title').textContent = '無法開啟簽到'; $('#app').innerHTML = '<div class="card"><p class="err">' + esc(msg) + '</p><p class="note">請重新掃描會場的 QR 碼，或洽詢會議工作人員。</p></div>'; }
 if (!window.forge) return fail('加密元件載入失敗，請確認手機已連上網路後重新整理。');
-if (!/^m[0-9a-f]{16}$/.test(MID || '') || !/^[0-9a-f]{32}$/.test(K || '')) return fail('簽到連結不完整。');
+if (!/^m[0-9a-f]{16}$/.test(MID || '') || !/^[0-9a-f]{32}$/.test(K || '') || (MK !== null && !/^[0-9a-f]{32}$/.test(MK))) return fail('連結不完整。');
 
 FS.byMeeting(PROJECT, COL_R, MID).then(function(docs){
   if (!docs.length) throw new Error('找不到這場會議的名單，可能主辦人尚未發布。');
@@ -120,19 +172,19 @@ FS.byMeeting(PROJECT, COL_R, MID).then(function(docs){
   D = CR.aesDec(CR.hex2bytes(K), last);
   $('#title').textContent = D.title || '會議';
   $('#where').textContent = [D.datetime, D.place].filter(Boolean).join('｜');
-  document.title = '簽到｜' + (D.title || '會議');
-  list();
+  document.title = (MK ? '會議紀錄｜' : '簽到｜') + (D.title || '會議');
+  if (MK) minutes(); else list();
 }).catch(function(e){ fail(e.message); });
 
 function mine(){ return (ls('ms.signed.' + MID) || []); }
 function list(){
   var M = mine();
   $('#app').innerHTML =
-    (M.length ? '<div class="mine">這支手機已送出：' + M.map(function(x){ return esc(x.name) + ' ' + hhmm(x.at); }).join('、') + '</div>' : '') +
+    (M.length ? '<div class="mine">這支手機已送出：' + M.map(function(x){ return esc(x.name); }).join('、') + '</div>' : '') +
     '<input type="search" id="q" placeholder="輸入姓名搜尋" aria-label="搜尋姓名" autocomplete="off">' +
     '<div class="list" id="list"></div>' +
     '<button class="btn link" id="walk">名單上找不到我（現場加簽）</button>' +
-    '<span class="lock">🔒 簽名與時間會在這支手機上加密後才送出，只有主辦人能解開</span>';
+    '<span class="lock">🔒 簽名會在這支手機上加密後才送出，只有主辦人能解開</span>';
   $('#q').value = q;
   $('#q').addEventListener('input', function(e){ q = e.target.value; draw(); });
   $('#walk').onclick = function(){ sign(null); };
@@ -172,10 +224,91 @@ function sign(p){
     try { e = CR.sealFor(D.pub, payload); } catch(err){ btn.disabled = false; btn.textContent = '確認簽到'; $('#msg').textContent = '加密失敗：' + err.message; return; }
     FS.add(PROJECT, COL_C, { m:MID, iv:e.iv, wk:e.wk, ct:e.ct, t:at }).then(function(){
       var M = mine(); M.push({ name:name, at:at }); ls('ms.signed.' + MID, M);
-      $('#app').innerHTML = '<div class="card done"><div class="stamp"><b>已簽到</b>' + hhmm(at) + '</div><div class="nm" style="font-size:1.4rem">' + esc(name) + '</div><p class="note">簽到資料已加密送出，謝謝。可以關閉這個頁面。</p><button class="btn link" id="again">幫其他人簽到</button></div>';
+      $('#app').innerHTML = '<div class="card done"><div class="stamp"><b>已簽到</b></div><div class="nm" style="font-size:1.4rem">' + esc(name) + '</div><p class="note">簽到資料已加密送出，謝謝。可以關閉這個頁面。</p><button class="btn link" id="again">幫其他人簽到</button></div>';
       $('#again').onclick = function(){ q = ''; list(); };
     }).catch(function(err){ btn.disabled = false; btn.textContent = '重新送出'; $('#msg').textContent = '送出失敗（' + err.message + '），請確認網路後再按一次。'; });
   };
+}
+
+/* ===== 手機填寫會議紀録 ===== */
+var MD = { items:[], notes:'' }, drev = 0, dirty = {}, notesDirty = false, sendTimer = null, sending = false, lastSent = 0;
+var CN = ['','一','二','三','四','五','六','七','八','九','十'];
+var cnNum = function(n){ return n<=10?CN[n]:n<20?'十'+CN[n-10]:CN[Math.floor(n/10)]+'十'+CN[n%10]; };
+var FLD = [['discussion','說明／討論','ta'],['decision','決議','ta'],['owner','負責單位／人','in'],['due','完成期限','in']];
+function loadDraft(){
+  return FS.byMeeting(PROJECT, COL_D, MID).then(function(docs){
+    if (!docs.length) return false;
+    var last = docs.sort(function(a, b){ return b.rev - a.rev; })[0];
+    if (last.rev <= drev) return false;
+    var o = CR.aesDec(CR.hex2bytes(MK), last); drev = last.rev; return o;
+  });
+}
+function minutes(){
+  document.querySelector('.eyebrow').textContent = '會議紀錄・手機填寫';
+  var saved = ls('ms.min.' + MID);
+  loadDraft().then(function(o){
+    if (o) { MD.items = o.items || []; MD.notes = o.notes || ''; }
+    if (saved && saved.dirty) { (saved.items || []).forEach(function(si){ if (!saved.dirty[si.id]) return; var it = MD.items.find(function(x){ return x.id === si.id; }); if (it) Object.assign(it, si); else MD.items.push(si); dirty[si.id] = true; }); if (saved.notesDirty) { MD.notes = saved.notes; notesDirty = true; } }
+    drawMinutes(); if (Object.keys(dirty).length || notesDirty) queueSend();
+    setInterval(refresh, 15000);
+  }).catch(function(e){ fail('讀取會議紀錄失敗：' + e.message); });
+}
+function fieldHtml(id, k, label, kind, v){
+  var mic = '<button type="button" class="mic" data-mic>🎤 語音</button>';
+  return '<label class="fld"><span class="lab"><span>' + label + '</span>' + (kind === 'ta' ? mic : '') + '</span>' +
+    (kind === 'ta' ? '<textarea data-id="' + esc(id) + '" data-k="' + k + '">' + esc(v) + '</textarea>' : '<input data-id="' + esc(id) + '" data-k="' + k + '" value="' + esc(v) + '">') + '</label>';
+}
+function drawMinutes(){
+  $('#app').innerHTML = MD.items.map(function(it, n){
+    return '<div class="card item" data-item="' + esc(it.id) + '"><div class="row" style="align-items:center"><span class="no">' + cnNum(n + 1) + '、</span><input style="flex:1;font-weight:700" data-id="' + esc(it.id) + '" data-k="topic" value="' + esc(it.topic) + '" placeholder="案由"></div>' +
+      FLD.map(function(f){ return fieldHtml(it.id, f[0], f[1], f[2], it[f[0]] || ''); }).join('') + '</div>';
+  }).join('') +
+    '<button class="btn" id="addIt">＋ 新增議題（臨時動議）</button>' +
+    '<div class="card">' + fieldHtml('__notes', 'notes', '其他／備註', 'ta', MD.notes) + '</div>' +
+    '<span class="lock">🔒 內容會在這支手機上加密後才送出，只有主辦人能解開</span>';
+  if (!$('#bar')) { var b = document.createElement('div'); b.className = 'bar'; b.id = 'bar'; b.innerHTML = '<span class="st" id="st">輸入後會自動送出</span><button class="btn seal" id="sendNow">立即送出</button>'; document.body.appendChild(b); $('#sendNow').onclick = function(){ send(); }; }
+  $('#addIt').onclick = function(){ var it = { id:'i' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), topic:'臨時動議', discussion:'', decision:'', owner:'', due:'' }; MD.items.push(it); dirty[it.id] = true; persist(); drawMinutes(); queueSend(); var el = document.querySelector('[data-item="' + it.id + '"] input'); if (el) { el.focus(); el.select(); } };
+  status();
+}
+document.addEventListener('input', function(e){
+  var el = e.target; if (!MK || !el.dataset || !el.dataset.k) return;
+  if (el.dataset.id === '__notes') { MD.notes = el.value; notesDirty = true; }
+  else { var it = MD.items.find(function(x){ return x.id === el.dataset.id; }); if (!it) return; it[el.dataset.k] = el.value; dirty[it.id] = true; }
+  persist(); queueSend();
+});
+document.addEventListener('click', function(e){
+  var b = e.target.closest && e.target.closest('[data-mic]'); if (!b || !MK) return; e.preventDefault();
+  var ta = b.closest('label').querySelector('textarea');
+  MIC.toggle(b, ta, function(st, err){ var m = MIC.msg(st, err); if (m) $('#st').textContent = m; else if (st === 'start') { b.textContent = '■ 停止'; $('#st').textContent = '正在聽…說完請按「停止」'; } else if (st === 'stop') { b.textContent = '🎤 語音'; queueSend(); } });
+});
+function persist(){ ls('ms.min.' + MID, { items:MD.items, notes:MD.notes, dirty:dirty, notesDirty:notesDirty }); }
+function queueSend(){ clearTimeout(sendTimer); sendTimer = setTimeout(send, 2500); status(); }
+function status(){ var n = Object.keys(dirty).length + (notesDirty ? 1 : 0), st = $('#st'); if (!st) return; st.textContent = sending ? '加密送出中…' : n ? '有 ' + n + ' 項尚未送出' : lastSent ? '已送出 ' + hhmm(lastSent) : '輸入後會自動送出'; }
+function send(){
+  clearTimeout(sendTimer);
+  if (sending) { queueSend(); return; }
+  var ids = Object.keys(dirty); if (!ids.length && !notesDirty) { status(); return; }
+  var payload = { mk:MK, items:MD.items.filter(function(it){ return dirty[it.id]; }), at:Date.now() };
+  if (notesDirty) payload.notes = MD.notes;
+  var e; try { e = CR.sealFor(D.pub, payload); } catch(err){ $('#st').textContent = '加密失敗：' + err.message; return; }
+  var snapD = dirty, snapN = notesDirty; dirty = {}; notesDirty = false; sending = true; status();
+  FS.add(PROJECT, COL_M, { m:MID, iv:e.iv, wk:e.wk, ct:e.ct, t:Date.now() }).then(function(){ sending = false; lastSent = Date.now(); persist(); status(); })
+    .catch(function(err){ sending = false; Object.keys(snapD).forEach(function(k){ dirty[k] = true; }); notesDirty = notesDirty || snapN; persist(); $('#st').textContent = '送出失敗，稍後自動重試（' + err.message + '）'; sendTimer = setTimeout(send, 8000); });
+}
+function refresh(){
+  if (sending) return;
+  loadDraft().then(function(o){
+    if (!o) return;
+    var focus = document.activeElement, added = false;
+    (o.items || []).forEach(function(ri){
+      var it = MD.items.find(function(x){ return x.id === ri.id; });
+      if (!it) { MD.items.push(ri); added = true; return; }
+      if (dirty[ri.id]) return;
+      ['topic','discussion','decision','owner','due'].forEach(function(k){ it[k] = ri[k] || ''; var el = document.querySelector('[data-id="' + ri.id + '"][data-k="' + k + '"]'); if (el && el !== focus && el.value !== it[k]) el.value = it[k]; });
+    });
+    if (!notesDirty && typeof o.notes === 'string') { MD.notes = o.notes; var ne = document.querySelector('[data-id="__notes"]'); if (ne && ne !== focus) ne.value = MD.notes; }
+    if (added && (!focus || !focus.dataset || !focus.dataset.k)) drawMinutes();
+  }).catch(function(){});
 }
 })();
 </script>
