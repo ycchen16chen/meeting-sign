@@ -49,6 +49,14 @@ input[type=search],.fld input{width:100%;padding:12px 14px;border:1px solid #AEB
 .mic.on{background:var(--seal);border-color:var(--seal);color:#fff}
 .bar{position:sticky;bottom:0;background:var(--surface);border-top:1px solid var(--line);padding:10px max(16px,env(safe-area-inset-right,0px)) calc(10px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px));display:flex;gap:10px;align-items:center;justify-content:space-between}
 .bar .st{font-size:.85rem;color:var(--muted)}
+.stampbox{border:1px solid #f0d4d0;border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:10px;background:#fdf6f5}
+.stampbox .row1{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.stampbox img.stp{max-height:64px;max-width:180px;background:#fff;border:1px solid #f0d4d0;border-radius:6px;padding:4px}
+.stampbox label.cons{display:flex;gap:8px;align-items:flex-start;font-size:.9rem;line-height:1.6}
+.stampbox label.cons input{margin-top:4px;width:20px;height:20px;flex:none}
+.stampbox .stsz{font-size:.88rem;line-height:2.2}
+.stampbox .stsz input[type=number]{width:4.6em;padding:4px 6px;border:1px solid #AEB8C7;border-radius:6px;font-size:1rem}
+.stampbox .two{display:flex;gap:8px}.stampbox .two .btn{flex:1;white-space:nowrap;padding:12px 8px}
 .mine{background:var(--seal-soft);color:var(--seal);border-radius:8px;padding:10px 14px;font-size:.9rem}
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/forge/1.3.1/forge.min.js"></script>
@@ -196,7 +204,7 @@ function list(){
   var M = mine();
   $('#app').innerHTML =
     (M.length ? '<div class="mine">這支手機已送出：' + M.map(function(x){ return esc(x.name); }).join('、') + '</div>' : '') +
-    (D.people || []).filter(function(p){ return tokFor(p.name); }).map(function(p){ return '<button class="btn seal" data-quick="' + esc(p.sid) + '" style="width:100%">我是 ' + esc(p.name) + '・蓋我的電子印章</button>'; }).join('') +
+    (D.people || []).filter(function(p){ return myStamp(p.name) || tokFor(p.name); }).map(function(p){ return '<button class="btn seal" data-quick="' + esc(p.sid) + '" style="width:100%">我是 ' + esc(p.name) + '・蓋我的電子印章</button>'; }).join('') +
     '<input type="search" id="q" placeholder="輸入姓名搜尋" aria-label="搜尋姓名" autocomplete="off">' +
     '<div class="list" id="list"></div>' +
     '<button class="btn link" id="walk">名單上找不到我（現場加簽）</button>' +
@@ -204,13 +212,13 @@ function list(){
   $('#q').value = q;
   $('#q').addEventListener('input', function(e){ q = e.target.value; draw(); });
   $('#walk').onclick = function(){ sign(null); };
-  document.querySelectorAll('[data-quick]').forEach(function(b){ b.onclick = function(){ var p = D.people.find(function(x){ return x.sid === b.dataset.quick; }); if (p) stampSign(p, b); }; });
+  document.querySelectorAll('[data-quick]').forEach(function(b){ b.onclick = function(){ var p = D.people.find(function(x){ return x.sid === b.dataset.quick; }); if (!p) return; var ms = myStamp(p.name); if (ms) submit({ sid:p.sid, name:p.name, unit:p.unit, stampImg:ms.img, wmm:ms.wmm, hmm:ms.hmm, consentAt:ms.consentAt, consentText:CONSENT, at:Date.now() }, p.name, b, b.textContent, true); else stampSign(p, b); }; });
   draw();
 }
 function draw(){
   var qq = q.trim().toLowerCase();
   var L = (D.people || []).filter(function(p){ return !qq || (p.name + p.unit).toLowerCase().indexOf(qq) >= 0; });
-  $('#list').innerHTML = L.length ? L.map(function(p){ return '<button data-sid="' + esc(p.sid) + '"><span><div class="nm">' + esc(p.name) + '</div><div class="un">' + esc(p.unit) + '</div></span><span class="go">簽到 ›</span></button>'; }).join('') : '<p class="note" style="padding:14px 16px">找不到「' + esc(q) + '」，可按下方「名單上找不到我」現場加簽。</p>';
+  $('#list').innerHTML = L.length ? L.map(function(p){ return '<button data-sid="' + esc(p.sid) + '"><span><div class="nm">' + esc(p.name) + (p.st ? ' <span style="font-family:var(--f-body);font-size:.75rem;color:var(--seal);border:1px solid var(--seal);border-radius:4px;padding:0 5px;vertical-align:3px;letter-spacing:0">🔴 電子印章</span>' : '') + '</div><div class="un">' + esc(p.unit) + '</div></span><span class="go">簽到 ›</span></button>'; }).join('') : '<p class="note" style="padding:14px 16px">找不到「' + esc(q) + '」，可按下方「名單上找不到我」現場加簽。</p>';
   document.querySelectorAll('#list button').forEach(function(b){ b.onclick = function(){ sign(D.people.find(function(p){ return p.sid === b.dataset.sid; })); }; });
 }
 function sign(p){
@@ -218,9 +226,7 @@ function sign(p){
   $('#app').innerHTML = '<div class="card">' +
     (p ? '<div><div class="nm" style="font-size:1.5rem">' + esc(p.name) + '</div><div class="un">' + esc(p.unit) + '</div></div>'
        : '<label class="fld">姓名<input id="wName" autocomplete="name"></label><label class="fld">單位／職稱<input id="wUnit"></label>') +
-    (p ? (tokFor(p.name)
-      ? '<button class="btn seal" id="useSt" style="width:100%">🔴 蓋我的電子印章</button><p class="note" style="text-align:center;margin:0">或在下方手寫簽名</p>'
-      : '<details class="note" id="stReg"><summary style="cursor:pointer;color:var(--accent)">我有電子印章 QR 簽到卡</summary><div style="display:flex;flex-direction:column;gap:8px;margin-top:8px"><span>請輸入卡片上的 12 碼代碼（或先用手機相機掃描卡片完成登錄，再回到這裡）：</span><input id="stCode" maxlength="15" autocapitalize="characters" autocomplete="off" placeholder="例如 AB12 CD34 EF56" style="padding:12px 14px;border:1px solid #AEB8C7;border-radius:8px;font-size:1.05rem;letter-spacing:.08em;text-transform:uppercase"><button class="btn seal" id="stCodeGo">登錄並蓋章簽到</button></div></details>') : '') +
+    '<div id="stArea"></div>' +
     '<div class="pad"><canvas id="cv"></canvas><div class="ph" id="ph">請用手指在框內簽名</div></div>' +
     '<p class="note err" id="msg"></p>' +
     '<div class="row"><button class="btn" id="back">返回</button><button class="btn" id="clr">清除</button><button class="btn seal" id="ok">確認簽到</button></div></div>';
@@ -232,8 +238,7 @@ function sign(p){
   ['pointerup','pointercancel'].forEach(function(t){ cv.addEventListener(t, function(){ drawing = false; }); });
   $('#clr').onclick = function(){ ctx.clearRect(0, 0, cv.width, cv.height); drawn = false; $('#ph').hidden = false; };
   $('#back').onclick = list;
-  if ($('#useSt')) $('#useSt').onclick = function(){ stampSign(p, this); };
-  if ($('#stCodeGo')) $('#stCodeGo').onclick = function(){ var c = $('#stCode').value.replace(/[\s-]/g, '').toUpperCase(); if (!/^[0-9A-Z]{12}$/.test(c)) { $('#msg').textContent = '代碼是 12 個英數字，請再確認。'; return; } addTok(p.name, c); stampSign(p, this); };
+  stampArea(p);
   $('#ok').onclick = function(){
     var name = p ? p.name : $('#wName').value.trim(), unit = p ? p.unit : $('#wUnit').value.trim();
     if (!name) { $('#msg').textContent = '請輸入姓名'; return $('#wName').focus(); }
@@ -255,9 +260,169 @@ function submit(payload, name, btn, label, isStamp){
   FS.add(PROJECT, COL_C, { m:MID, iv:e.iv, wk:e.wk, ct:e.ct, t:payload.at }).then(function(){
     var M = mine(); M.push({ name:name, at:payload.at }); ls('ms.signed.' + MID, M);
     window.scrollTo(0, 0);
-    $('#app').innerHTML = '<div class="card done"><div class="stamp"><b>' + (isStamp ? '已蓋章' : '已簽到') + '</b></div><div class="nm" style="font-size:1.4rem">' + esc(name) + '</div><p class="note">' + (isStamp ? '已送出電子印章簽到，主辦端驗證後會帶入你的印章。' : '簽到資料已加密送出，謝謝。') + '可以關閉這個頁面。</p><button class="btn link" id="again">幫其他人簽到</button></div>';
+    $('#app').innerHTML = '<div class="card done"><div class="stamp"><b>' + (isStamp ? '已蓋章' : '已簽到') + '</b></div><div class="nm" style="font-size:1.4rem">' + esc(name) + '</div><p class="note">' + (isStamp ? (payload.stampImg ? '已用你的電子印章完成簽到，資料已加密送出。' : '已送出電子印章簽到，主辦端驗證後會帶入你的印章。') : '簽到資料已加密送出，謝謝。') + '可以關閉這個頁面。</p><button class="btn link" id="again">幫其他人簽到</button></div>';
     $('#again').onclick = function(){ q = ''; list(); };
   }).catch(function(err){ btn.disabled = false; btn.textContent = '重新送出'; if (msg) msg.textContent = '送出失敗（' + err.message + '），請確認網路後再按一次。'; });
+}
+
+
+/* ===== 手機上直接拍照建立電子印章並授權（比照 TB 系統） ===== */
+var STD_W = 26, STD_H = 10;
+var CONSENT = '本人同意授權本會議系統於會議簽到單，以本電子印章代替親筆簽名。';
+function nowROC(){ var d = new Date(), p = function(n){ return String(n).padStart(2, '0'); }; return (d.getFullYear() - 1911) + '/' + p(d.getMonth() + 1) + '/' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes()); }
+function myStamps(){ return ls('ms.stamps') || {}; }
+function myStamp(name){ var o = myStamps(); if (o[name]) return o[name]; var k = Object.keys(o).find(function(x){ return x && name && (x.indexOf(name) === 0 || name.indexOf(x) === 0); }); return k ? o[k] : null; }
+function saveMyStamp(name, rec){ var o = myStamps(); if (rec) o[name] = rec; else delete o[name]; ls('ms.stamps', o); }
+// 拍照／選圖後：先框選印章範圍
+function cropImg(im){ return new Promise(function(ok, no){
+  var ov = document.createElement('div');
+  ov.style.cssText = 'position:fixed;inset:0;z-index:2147483000;background:rgba(15,23,42,.94);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:14px;box-sizing:border-box;color:#fff;touch-action:none;user-select:none;-webkit-user-select:none';
+  ov.innerHTML = '<div style="font-size:17px;font-weight:700;text-align:center">✂ 拖曳框線，框住印章就好</div>' +
+    '<div style="font-size:13px;color:#cbd5e1;text-align:center">拖動框內＝移動　拖動四角＝調整大小　在框外拖一下＝重新框選</div>' +
+    '<div class="crWrap" style="position:relative;line-height:0;max-width:100%;touch-action:none"><canvas class="crCv" style="display:block;max-width:calc(100vw - 28px);max-height:calc(100vh - 190px);touch-action:none"></canvas>' +
+    '<div class="crBox" style="position:absolute;border:2px solid #facc15;box-shadow:0 0 0 9999px rgba(0,0,0,.55);box-sizing:border-box;cursor:move;touch-action:none"></div></div>' +
+    '<div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center">' +
+    '<button type="button" class="crOk" style="font:inherit;font-size:16px;font-weight:700;border:0;border-radius:10px;padding:12px 22px;background:#16a34a;color:#fff;min-height:48px">✂ 裁切並使用</button>' +
+    '<button type="button" class="crAll" style="font:inherit;font-size:15px;border:0;border-radius:10px;padding:12px 16px;background:#e2e8f0;color:#0f172a;min-height:48px">整張使用</button>' +
+    '<button type="button" class="crNo" style="font:inherit;font-size:15px;border:1px solid #94a3b8;border-radius:10px;padding:12px 16px;background:transparent;color:#fff;min-height:48px">取消重拍</button></div>';
+  document.body.appendChild(ov);
+  var cv = ov.querySelector('.crCv'), box = ov.querySelector('.crBox'), sc = Math.min(1, 1400 / im.width, 1400 / im.height);
+  cv.width = Math.max(1, Math.round(im.width * sc)); cv.height = Math.max(1, Math.round(im.height * sc)); cv.getContext('2d').drawImage(im, 0, 0, cv.width, cv.height);
+  ['nw','ne','sw','se'].forEach(function(k){ var hd = document.createElement('div'); hd.dataset.h = k; hd.style.cssText = 'position:absolute;width:34px;height:34px;margin:-17px;touch-action:none;' + (k[0] === 'n' ? 'top:0;' : 'top:100%;') + (k[1] === 'w' ? 'left:0;' : 'left:100%;') + 'cursor:' + k + '-resize';
+    hd.innerHTML = '<div style="position:absolute;left:9px;top:9px;width:16px;height:16px;border-radius:50%;background:#facc15;border:2px solid #fff;box-sizing:border-box;pointer-events:none"></div>'; box.appendChild(hd); });
+  var r = { x:.15, y:.2, w:.7, h:.6 }, drag = null, wrap = ov.querySelector('.crWrap');
+  function draw(){ box.style.left = r.x * 100 + '%'; box.style.top = r.y * 100 + '%'; box.style.width = r.w * 100 + '%'; box.style.height = r.h * 100 + '%'; }
+  draw();
+  function pos(e){ var b = cv.getBoundingClientRect(); return { x:Math.min(1, Math.max(0, (e.clientX - b.left) / b.width)), y:Math.min(1, Math.max(0, (e.clientY - b.top) / b.height)) }; }
+  wrap.addEventListener('pointerdown', function(e){ e.preventDefault(); var p = pos(e), t = e.target, hk = t.dataset && t.dataset.h;
+    try { wrap.setPointerCapture(e.pointerId); } catch(_){}
+    if (hk) drag = { m:'h', k:hk, r0:{ x:r.x, y:r.y, w:r.w, h:r.h } };
+    else if (t === box) drag = { m:'mv', p0:p, r0:{ x:r.x, y:r.y, w:r.w, h:r.h } };
+    else { drag = { m:'new', p0:p }; r = { x:p.x, y:p.y, w:0, h:0 }; draw(); } });
+  wrap.addEventListener('pointermove', function(e){ if (!drag) return; e.preventDefault(); var p = pos(e), o = drag.r0, MIN = .04;
+    if (drag.m === 'mv') { r.x = Math.min(1 - o.w, Math.max(0, o.x + p.x - drag.p0.x)); r.y = Math.min(1 - o.h, Math.max(0, o.y + p.y - drag.p0.y)); }
+    else if (drag.m === 'new') { r.x = Math.min(p.x, drag.p0.x); r.y = Math.min(p.y, drag.p0.y); r.w = Math.abs(p.x - drag.p0.x); r.h = Math.abs(p.y - drag.p0.y); }
+    else { var x0 = o.x, y0 = o.y, x1 = o.x + o.w, y1 = o.y + o.h;
+      if (drag.k[1] === 'w') x0 = Math.min(p.x, x1 - MIN); else x1 = Math.max(p.x, x0 + MIN);
+      if (drag.k[0] === 'n') y0 = Math.min(p.y, y1 - MIN); else y1 = Math.max(p.y, y0 + MIN);
+      r = { x:x0, y:y0, w:x1 - x0, h:y1 - y0 }; }
+    draw(); });
+  function up(){ if (drag && drag.m === 'new' && (r.w < .03 || r.h < .03)) r = { x:.15, y:.2, w:.7, h:.6 }; drag = null; draw(); }
+  wrap.addEventListener('pointerup', up); wrap.addEventListener('pointercancel', up);
+  function done(v, err){ ov.remove(); if (err) no(err); else ok(v); }
+  ov.querySelector('.crOk').onclick = function(){ var sx = Math.round(r.x * im.width), sy = Math.round(r.y * im.height), sw = Math.max(1, Math.round(r.w * im.width)), sh = Math.max(1, Math.round(r.h * im.height));
+    var c = document.createElement('canvas'); c.width = sw; c.height = sh; c.getContext('2d').drawImage(im, sx, sy, sw, sh, 0, 0, sw, sh);
+    var o = new Image(); o.onload = function(){ done(o); }; o.onerror = function(){ done(im); }; o.src = c.toDataURL('image/png'); };
+  ov.querySelector('.crAll').onclick = function(){ done(im); };
+  ov.querySelector('.crNo').onclick = function(){ var e = new Error('已取消，請重新拍照或選圖。'); e.cancel = true; done(null, e); };
+}); }
+// 拍照的印章：抓出紅色印文（不受紙張陰影、灰底影響），去背、裁切成透明 PNG
+function redInk(im){ var sc = Math.min(1, 1600 / im.width, 1600 / im.height), w = Math.max(1, Math.round(im.width * sc)), h0 = Math.max(1, Math.round(im.height * sc));
+  var c = document.createElement('canvas'); c.width = w; c.height = h0; var x = c.getContext('2d', { willReadFrequently:true }); x.drawImage(im, 0, 0, w, h0);
+  var d = x.getImageData(0, 0, w, h0), a = d.data, n = w * h0, R = new Float32Array(n), hist = new Array(256).fill(0), i;
+  for (i = 0; i < n; i++) { var v = a[i*4] - (a[i*4+1] + a[i*4+2]) / 2; R[i] = v; if (v > 0) hist[Math.min(255, v | 0)]++; }
+  var tot = 0, sum = 0; for (i = 0; i < 256; i++) { tot += hist[i]; sum += i * hist[i]; } var wB = 0, sB = 0, best = 0, T = 35;
+  for (i = 0; i < 256; i++) { wB += hist[i]; if (!wB) continue; var wF = tot - wB; if (!wF) break; sB += i * hist[i]; var mB = sB / wB, mF = (sum - sB) / wF, vv = wB * wF * (mB - mF) * (mB - mF); if (vv > best) { best = vv; T = i; } }
+  T = Math.max(35, T); var M2 = new Uint8Array(n), cnt = 0; for (i = 0; i < n; i++) if (R[i] > T) { M2[i] = 1; cnt++; }
+  if (cnt < n * 0.002) return null;
+  var x0 = w, y0 = h0, x1 = -1, y1 = -1;
+  for (var y = 1; y < h0 - 1; y++) for (var xx = 1; xx < w - 1; xx++) { var k = y * w + xx; if (!M2[k]) continue; var nb = M2[k-1] + M2[k+1] + M2[k-w] + M2[k+w] + M2[k-w-1] + M2[k-w+1] + M2[k+w-1] + M2[k+w+1]; if (nb < 3) continue; if (xx < x0) x0 = xx; if (xx > x1) x1 = xx; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+  if (x1 < 0) return null;
+  function shrink(get, lo, hi){ var mx = 0, vs = []; for (var t = lo; t <= hi; t++) { var s0 = get(t); vs.push(s0); if (s0 > mx) mx = s0; } var a0 = 0, a1 = vs.length - 1; while (a0 < a1 && vs[a0] < mx * 0.05) a0++; while (a1 > a0 && vs[a1] < mx * 0.05) a1--; return [lo + a0, lo + a1]; }
+  var ys = shrink(function(y){ var s0 = 0; for (var xx = x0; xx <= x1; xx++) s0 += M2[y * w + xx]; return s0; }, y0, y1); y0 = ys[0]; y1 = ys[1];
+  var xs = shrink(function(xx){ var s0 = 0; for (var y = y0; y <= y1; y++) s0 += M2[y * w + xx]; return s0; }, x0, x1); x0 = xs[0]; x1 = xs[1];
+  var m = Math.round(Math.max(x1 - x0, y1 - y0) * 0.02) + 2; x0 = Math.max(0, x0 - m); y0 = Math.max(0, y0 - m); x1 = Math.min(w - 1, x1 + m); y1 = Math.min(h0 - 1, y1 + m);
+  var sw = x1 - x0 + 1, sh = y1 - y0 + 1, o = document.createElement('canvas'); o.width = sw; o.height = sh; var ox = o.getContext('2d'), od = ox.createImageData(sw, sh), q = od.data;
+  for (var y2 = 0; y2 < sh; y2++) for (var x2 = 0; x2 < sw; x2++) { var k2 = (y0 + y2) * w + (x0 + x2), al = Math.max(0, Math.min(1, (R[k2] - T * 0.55) / (T * 0.9))), j = (y2 * sw + x2) * 4;
+    q[j] = 198; q[j+1] = 28; q[j+2] = 38; q[j+3] = Math.round(al * 255); }
+  ox.putImageData(od, 0, 0);
+  return fitPng(o, 600, 300);
+}
+function fitPng(src, maxW, maxH){ var s2 = Math.min(1, maxW / src.width, maxH / src.height), out;
+  do { var o2 = document.createElement('canvas'); o2.width = Math.max(1, Math.round(src.width * s2)); o2.height = Math.max(1, Math.round(src.height * s2)); var c2 = o2.getContext('2d'); c2.imageSmoothingQuality = 'high'; c2.drawImage(src, 0, 0, o2.width, o2.height); out = o2.toDataURL('image/png'); s2 *= 0.85; } while (out.length > 90000 && s2 > 0.15);
+  return out; }
+function whiteOut(im){ var sc = Math.min(1, 900 / im.width, 900 / im.height), w = Math.max(1, Math.round(im.width * sc)), h0 = Math.max(1, Math.round(im.height * sc));
+  var c = document.createElement('canvas'); c.width = w; c.height = h0; var x = c.getContext('2d'); x.drawImage(im, 0, 0, w, h0);
+  var d = x.getImageData(0, 0, w, h0), a = d.data, x0 = w, y0 = h0, x1 = -1, y1 = -1;
+  for (var i = 0; i < a.length; i += 4) { var mn = Math.min(a[i], a[i+1], a[i+2]), mx = Math.max(a[i], a[i+1], a[i+2]);
+    if (mn > 215 && mx - mn < 30) a[i+3] = 0; else if (a[i+3] > 20) { var px = (i / 4) % w, py = Math.floor(i / 4 / w); if (px < x0) x0 = px; if (px > x1) x1 = px; if (py < y0) y0 = py; if (py > y1) y1 = py; } }
+  if (x1 < 0) throw new Error('圖片裡找不到印章，請換一張背景較乾淨的圖片。');
+  x.putImageData(d, 0, 0); var m = 4; x0 = Math.max(0, x0 - m); y0 = Math.max(0, y0 - m); x1 = Math.min(w - 1, x1 + m); y1 = Math.min(h0 - 1, y1 + m);
+  var o = document.createElement('canvas'); o.width = x1 - x0 + 1; o.height = y1 - y0 + 1; o.getContext('2d').drawImage(c, x0, y0, o.width, o.height, 0, 0, o.width, o.height);
+  return fitPng(o, 600, 300); }
+function prepStamp(file){ return new Promise(function(ok, no){
+  if (!/^image\//.test(file.type || '') && !/\.(png|jpe?g|gif|webp|bmp|heic)$/i.test(file.name)) { no(new Error('請選擇印章圖片（PNG 或 JPG）。')); return; }
+  var fr = new FileReader(); fr.onerror = function(){ no(new Error('讀不到這個圖片。')); };
+  fr.onload = function(){ var im = new Image(); im.onerror = function(){ no(new Error('這個圖片格式無法使用，請改用 PNG 或 JPG。')); };
+    im.onload = function(){ cropImg(im).then(function(im2){ try { ok(redInk(im2) || whiteOut(im2)); } catch(e){ no(e); } }, no); };
+    im.src = fr.result; };
+  fr.readAsDataURL(file); }); }
+
+function shrinkData(url, limit){ return new Promise(function(ok){ var im = new Image(); im.onload = function(){ var s = 1, out = url; while (out.length > limit && s > 0.12) { s *= 0.8; var c = document.createElement('canvas'); c.width = Math.max(1, Math.round(im.width * s)); c.height = Math.max(1, Math.round(im.height * s)); var x = c.getContext('2d'); x.imageSmoothingQuality = 'high'; x.drawImage(im, 0, 0, c.width, c.height); out = c.toDataURL('image/png'); } ok(out); }; im.onerror = function(){ ok(url); }; im.src = url; }); }
+function stampArea(p){
+  var box = $('#stArea'); if (!box) return;
+  var nameOf = function(){ return p ? p.name : ($('#wName') ? $('#wName').value.trim() : ''); };
+  var unitOf = function(){ return p ? p.unit : ($('#wUnit') ? $('#wUnit').value.trim() : ''); };
+  var send = function(rec, btn){
+    var n = nameOf(); if (!n) { $('#msg').textContent = '請先輸入姓名'; if ($('#wName')) $('#wName').focus(); return; }
+    submit({ sid:p ? p.sid : null, name:n, unit:unitOf(), stampImg:rec.img, wmm:rec.wmm, hmm:rec.hmm, consentAt:rec.consentAt, consentText:CONSENT, at:Date.now() }, n, btn, btn.textContent, true);
+  };
+  var draw = function(){
+    var n = nameOf(), mine = n ? myStamp(n) : null, card = p && tokFor(p.name);
+    if (mine) {
+      box.innerHTML = '<div class="stampbox"><div class="row1"><b>🔴 我的電子印章</b><img class="stp" alt="印章" src="' + mine.img + '"></div>' +
+        '<label class="cons"><input type="checkbox" id="stUse" checked><span>我是 <b></b> 本人（或經本人授權），同意本次以此印章代替簽名。</span></label>' +
+        '<button class="btn seal" id="stGo" style="width:100%">🔴 蓋我的電子印章</button><button class="btn link" id="stRedo">更換印章</button></div>' +
+        '<p class="note" style="text-align:center;margin:0">或在下方手寫簽名</p>';
+      box.querySelector('.cons b').textContent = n;
+      $('#stUse').onchange = function(){ $('#stGo').disabled = !this.checked; };
+      $('#stGo').onclick = function(){ send(mine, this); };
+      $('#stRedo').onclick = function(){ form(); };
+      return;
+    }
+    if (card) {
+      box.innerHTML = '<button class="btn seal" id="stCard" style="width:100%">🔴 蓋我的電子印章（QR 簽到卡）</button><button class="btn link" id="stNew">改用手機拍照建立印章</button><p class="note" style="text-align:center;margin:0">或在下方手寫簽名</p>';
+      $('#stCard').onclick = function(){ stampSign(p, this); };
+      $('#stNew').onclick = function(){ form(); };
+      return;
+    }
+    box.innerHTML = '<button class="btn seal" id="stOpen" style="width:100%">🔴 電子印章簽到（用手機拍印章）</button>' +
+      (p && p.st ? '<details class="note"><summary style="cursor:pointer;color:var(--accent)">我有電子印章 QR 簽到卡</summary><div style="display:flex;flex-direction:column;gap:8px;margin-top:8px"><span>請輸入卡片上的 12 碼代碼：</span><input id="stCode" maxlength="15" autocapitalize="characters" autocomplete="off" placeholder="例如 AB12 CD34 EF56" style="padding:12px 14px;border:1px solid #AEB8C7;border-radius:8px;font-size:1.05rem;letter-spacing:.08em;text-transform:uppercase"><button class="btn seal" id="stCodeGo">登錄並蓋章簽到</button></div></details>' : '') +
+      '<p class="note" style="text-align:center;margin:0">或在下方手寫簽名</p>';
+    $('#stOpen').onclick = function(){ form(); };
+    if ($('#stCodeGo')) $('#stCodeGo').onclick = function(){ var c = $('#stCode').value.replace(/[\s-]/g, '').toUpperCase(); if (!/^[0-9A-Z]{12}$/.test(c)) { $('#msg').textContent = '代碼是 12 個英數字，請再確認。'; return; } addTok(p.name, c); stampSign(p, this); };
+  };
+  var form = function(){
+    box.innerHTML = '<div class="stampbox"><div class="row1"><b>🔴 建立我的電子印章</b></div>' +
+      '<div class="two"><button class="btn seal" type="button" id="stCam">📷 拍照印章</button><button class="btn" type="button" id="stPick">🖼 選擇圖片</button></div>' +
+      '<input type="file" id="stCamIn" accept="image/*" capture="environment" hidden><input type="file" id="stFileIn" accept="image/*" hidden>' +
+      '<span class="note">把蓋好的印章放在白紙上、光線充足、鏡頭正對印章；拍完框選印章範圍，系統會自動抓出紅色印文、去掉背景。</span>' +
+      '<div id="stPrev" hidden><img class="stp" id="stImg" alt="印章預覽"><div class="stsz">印章<b>實際尺寸</b>：寬 <input id="stW" type="number" inputmode="decimal" min="5" max="120" step="0.5"> mm × 高 <input id="stH" type="number" inputmode="decimal" min="5" max="120" step="0.5"> mm <label class="note"><input type="checkbox" id="stLock" checked> 等比例</label></div></div>' +
+      '<label class="cons"><input type="checkbox" id="stCons"><span id="stCtext"></span></label>' +
+      '<button class="btn seal" id="stSave" style="width:100%" disabled>授權並蓋章簽到</button><button class="btn link" id="stCancel">取消</button><span class="note err" id="stMsg"></span></div>';
+    var img = null, ar = STD_W / STD_H;
+    var setT = function(){ $('#stCtext').textContent = '我是 ' + (nameOf() || '○○○') + ' 本人（或經本人授權）。' + CONSENT; };
+    var upd = function(){ $('#stSave').disabled = !(img && $('#stCons').checked && nameOf()); };
+    setT(); if ($('#wName')) $('#wName').oninput = function(){ setT(); upd(); };
+    $('#stCam').onclick = function(){ $('#stCamIn').click(); }; $('#stPick').onclick = function(){ $('#stFileIn').click(); };
+    $('#stCamIn').onchange = $('#stFileIn').onchange = function(){ var f = this.files[0]; this.value = ''; img = null; upd(); if (!f) return; $('#stMsg').textContent = '處理中…';
+      prepStamp(f).then(function(u){ return shrinkData(u, 42000); }).then(function(u){ $('#stMsg').textContent = ''; img = u; $('#stImg').src = u; $('#stPrev').hidden = false;
+        var im = new Image(); im.onload = function(){ ar = im.width / im.height; $('#stH').value = STD_H; $('#stW').value = STD_W; }; im.src = u; upd(); },
+        function(e){ $('#stMsg').textContent = e.cancel ? '' : e.message; }); };
+    $('#stW').oninput = function(){ if (!$('#stLock').checked) return; var w = parseFloat(this.value); if (w > 0) $('#stH').value = Math.round(w / ar * 2) / 2; };
+    $('#stH').oninput = function(){ if (!$('#stLock').checked) return; var hh = parseFloat(this.value); if (hh > 0) $('#stW').value = Math.round(hh * ar * 2) / 2; };
+    $('#stCons').onchange = upd;
+    $('#stCancel').onclick = draw;
+    $('#stSave').onclick = function(){
+      var wmm = parseFloat($('#stW').value), hmm = parseFloat($('#stH').value);
+      if (!(wmm >= 5 && wmm <= 120 && hmm >= 5 && hmm <= 120)) { $('#stMsg').textContent = '請輸入印章實際尺寸（5～120 mm）。'; return; }
+      var rec = { img:img, wmm:wmm, hmm:hmm, consentAt:nowROC() };
+      saveMyStamp(nameOf(), rec);
+      send(rec, this);
+    };
+  };
+  draw();
+  if (!p && $('#wName')) $('#wName').addEventListener('change', function(){ if (!$('#stCam')) draw(); });
 }
 
 /* ===== 手機填寫會議紀録 ===== */
