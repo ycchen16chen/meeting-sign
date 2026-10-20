@@ -225,7 +225,7 @@ function sign(p){
   window.scrollTo(0, 0);
   $('#app').innerHTML = '<div class="card">' +
     (p ? '<div><div class="nm" style="font-size:1.5rem">' + esc(p.name) + '</div><div class="un">' + esc(p.unit) + '</div></div>'
-       : '<label class="fld">姓名<input id="wName" autocomplete="name"></label><label class="fld">單位／職稱<input id="wUnit"></label>') +
+       : '<label class="fld">姓名<input id="wName" autocomplete="name"></label><label class="fld">燈號<input id="wUnit" maxlength="8" autocapitalize="characters" autocomplete="off" placeholder="例：DOC1234A" style="text-transform:uppercase"></label>') +
     '<div id="stArea"></div>' +
     '<div class="pad"><canvas id="cv"></canvas><div class="ph" id="ph">請用手指在框內簽名</div></div>' +
     '<p class="note err" id="msg"></p>' +
@@ -240,7 +240,7 @@ function sign(p){
   $('#back').onclick = list;
   stampArea(p);
   $('#ok').onclick = function(){
-    var name = p ? p.name : $('#wName').value.trim(), unit = p ? p.unit : $('#wUnit').value.trim();
+    var name = p ? p.name : $('#wName').value.trim(), unit = p ? p.unit : '';
     if (!name) { $('#msg').textContent = '請輸入姓名'; return $('#wName').focus(); }
     if (!drawn) { $('#msg').textContent = '請先簽名'; return; }
     var o = document.createElement('canvas'); o.width = 320; o.height = Math.round(320 * cv.height / cv.width);
@@ -254,6 +254,7 @@ function stampSign(p, btn){
   submit({ sid:p.sid, name:p.name, unit:p.unit, stamp:CR.proof(tok, MID), at:Date.now() }, p.name, btn, btn.textContent, true);
 }
 function submit(payload, name, btn, label, isStamp){
+  if (!payload.sid && $('#wUnit')) payload.code = $('#wUnit').value.replace(/\s/g, '').toUpperCase().slice(0, 8);
   btn.disabled = true; btn.textContent = '加密送出中…'; var msg = $('#msg'); if (msg) msg.textContent = '';
   var e;
   try { e = CR.sealFor(D.pub, payload); } catch(err){ btn.disabled = false; btn.textContent = label; if (msg) msg.textContent = '加密失敗：' + err.message; return; }
@@ -362,7 +363,7 @@ function shrinkData(url, limit){ return new Promise(function(ok){ var im = new I
 function stampArea(p){
   var box = $('#stArea'); if (!box) return;
   var nameOf = function(){ return p ? p.name : ($('#wName') ? $('#wName').value.trim() : ''); };
-  var unitOf = function(){ return p ? p.unit : ($('#wUnit') ? $('#wUnit').value.trim() : ''); };
+  var unitOf = function(){ return p ? p.unit : ''; };
   var send = function(rec, btn){
     var n = nameOf(); if (!n) { $('#msg').textContent = '請先輸入姓名'; if ($('#wName')) $('#wName').focus(); return; }
     submit({ sid:p ? p.sid : null, name:n, unit:unitOf(), stampImg:rec.img, wmm:rec.wmm, hmm:rec.hmm, consentAt:rec.consentAt, consentText:CONSENT, at:Date.now() }, n, btn, btn.textContent, true);
