@@ -379,6 +379,7 @@ function newTok(){ var a = new Uint8Array(12); try { crypto.getRandomValues(a); 
 // 主辦端在電腦上重拍了印章（圖不同且比較新）→ 清掉手機上的舊印章圖；同一顆印章不清除。印章代碼（ms.tok）保留，之後每場會議都能蓋章。
 function purgeStale(people){ var o = myStamps(), n = 0; (people || []).forEach(function(p){ if (!p.stAt) return; Object.keys(o).forEach(function(k){ if (!sameNm(k, p.name)) return; if (p.stH && imgHash(o[k].img) === p.stH) return; if (p.stH && (+o[k].at || 0) < p.stAt - 2000) { delete o[k]; n++; } }); }); if (n) ls('ms.stamps', o); return n; }
 function hasAuth(n){ return !!(n && D && Array.isArray(D.stNames) && D.stNames.some(function(x){ return sameNm(x, n); })); }
+function inkOk(src){ return new Promise(function(ok){ var im = new Image(); im.onload = function(){ try { var w = Math.min(240, im.naturalWidth || 1), hh = Math.max(1, Math.round(w * im.naturalHeight / im.naturalWidth)); var cv = document.createElement('canvas'); cv.width = w; cv.height = hh; var g = cv.getContext('2d'); g.drawImage(im, 0, 0, w, hh); var d = g.getImageData(0, 0, w, hh).data, n = 0; for (var i = 0; i < d.length; i += 4) if (d[i + 3] > 60 && d[i] + d[i + 1] + d[i + 2] < 660) n++; ok(n >= Math.max(12, w * hh * 0.0015)); } catch(e){ ok(true); } }; im.onerror = function(){ ok(false); }; im.src = src; }); }
 function myStamps(){ return ls('ms.stamps') || {}; }
 function myStamp(name){ var o = myStamps(); if (o[name]) return o[name]; var k = Object.keys(o).find(function(x){ return x && name && (x.indexOf(name) === 0 || name.indexOf(x) === 0); }); return k ? o[k] : null; }
 function saveMyStamp(name, rec){ var o = myStamps(); if (rec) o[name] = rec; else delete o[name]; ls('ms.stamps', o); }
@@ -527,7 +528,7 @@ function stampArea(p){
     setT(); if ($('#wName')) $('#wName').oninput = function(){ setT(); upd(); };
     $('#stCam').onclick = function(){ $('#stCamIn').click(); }; $('#stPick').onclick = function(){ $('#stFileIn').click(); };
     $('#stCamIn').onchange = $('#stFileIn').onchange = function(){ var f = this.files[0]; this.value = ''; img = null; upd(); if (!f) return; $('#stMsg').textContent = '處理中…';
-      prepStamp(f).then(function(u){ return shrinkData(u, 42000); }).then(function(u){ $('#stMsg').textContent = ''; img = u; $('#stImg').src = u; $('#stPrev').hidden = false;
+      prepStamp(f).then(function(u){ return shrinkData(u, 42000); }).then(function(u){ return inkOk(u).then(function(okInk){ if (!okInk) throw new Error('沒有抓到紅色印文，請把印章蓋清楚、光線充足後重拍。'); return u; }); }).then(function(u){ $('#stMsg').textContent = ''; img = u; $('#stImg').src = u; $('#stPrev').hidden = false;
         var im = new Image(); im.onload = function(){ ar = im.width / im.height; var d = stdSize(ar); $('#stH').value = d.h; $('#stW').value = d.w; }; im.src = u; upd(); },
         function(e){ $('#stMsg').textContent = e.cancel ? '' : e.message; }); };
     $('#stW').oninput = function(){ if (!$('#stLock').checked) return; var w = parseFloat(this.value); if (w > 0) $('#stH').value = Math.round(w / ar * 2) / 2; };
