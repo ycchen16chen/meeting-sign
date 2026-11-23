@@ -169,7 +169,7 @@ var esc = function(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, fun
 var hhmm = function(t){ var d = new Date(t), p = function(n){ return String(n).padStart(2,'0'); }; return p(d.getHours()) + ':' + p(d.getMinutes()); };
 function ls(k, v){ try { if (v === undefined) { var r = localStorage.getItem(k); return r ? JSON.parse(r) : null; } localStorage.setItem(k, JSON.stringify(v)); } catch(e){ return null; } }
 var DEF_PROJECT = 'meeting-sign-2781e';
-var PAGE_VER = '1151123';   // 與主辦端 MEET_VER 相同
+var PAGE_VER = '1151123b';   // 與主辦端 MEET_VER 相同
 try { var qv = new URLSearchParams(location.search).get('v'); if (qv && qv > PAGE_VER && sessionStorage.getItem('ms.rl') !== qv) { sessionStorage.setItem('ms.rl', qv); location.replace(location.pathname + '?v=' + qv + '&r=' + Date.now() + location.hash); return; } } catch(e){}
 var raw = (location.hash || '').slice(1), MK = null;
 function toks(){ return ls('ms.tok') || []; }
@@ -207,7 +207,8 @@ function mine(){ return (ls('ms.signed.' + MID) || []); }
 var DEPTS = ['胸腔部', '護理部', '個案管理師', '肺復原', '藥劑部', '肺功能', '營養部', '社工組', '其他部科'];
 function meFor(name){ return (ls('ms.me') || {})[name] || null; }
 function saveMe(name, o){ var m = ls('ms.me') || {}; m[name] = o; ls('ms.me', m); }
-function dirOf(name){ if (!D || !name) return null; var x = (D.dir || []).find(function(e){ return e.n === name; }); if (x) return { title:x.t, code:x.c, dept:x.d, deptName:x.dn, st:x.st, sv:x.sv }; var r = (D.people || []).find(function(e){ return e.name === name; }); return r ? { title:r.ti, code:r.cd, dept:r.dpt, deptName:r.dn, st:r.st, sv:r.sv } : null; }
+function dirOf(name){ if (!D || !name) return null; var x = (D.dir || []).find(function(e){ return e.n === name; }); if (x) return { title:x.t, code:x.c, dept:x.d, deptName:x.dn, st:x.st, sv:x.sv, stH:x.stH }; var r = (D.people || []).find(function(e){ return e.name === name; }); return r ? { title:r.ti, code:r.cd, dept:r.dpt, deptName:r.dn, st:r.st, sv:r.sv, stH:r.stH } : null; }
+function imgHash(s){ s = String(s || ''); var h = 5381; for (var i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0; return (h >>> 0).toString(36) + s.length.toString(36); }
 function infoFor(p, name){ var h = p ? { title:p.ti, code:p.cd, dept:p.dpt || p.dp, deptName:p.dn } : dirOf(name) || {}, me = meFor(p ? p.name : name) || {}; var f = function(k){ return h[k] || me[k] || ''; }; var dp = f('dept'); if (dp === '肺復原室') dp = '肺復原'; return { title:f('title'), code:f('code'), dept:dp, deptName:f('deptName') }; }
 function whoHtml(p){
   var i = p ? infoFor(p) : { title:'', code:'', dept:'', deptName:'' };
@@ -425,12 +426,12 @@ function stampArea(p){
   var unitOf = function(){ return p ? p.unit : ''; };
   var send = function(rec, btn){
     var n = nameOf(); if (!n) { $('#msg').textContent = '請先輸入姓名'; if ($('#wName')) $('#wName').focus(); return; }
-    submit({ sid:p ? p.sid : null, name:n, unit:unitOf(), stampImg:rec.img, wmm:rec.wmm, hmm:rec.hmm, regAt:rec.regAt || 0, consentAt:rec.consentAt, consentText:CONSENT, at:Date.now() }, n, btn, btn.textContent, true);
+    submit({ sid:p ? p.sid : null, name:n, unit:unitOf(), stampImg:rec.img, wmm:rec.wmm, hmm:rec.hmm, regAt:rec.regAt || rec.at || 0, consentAt:rec.consentAt, consentText:CONSENT, at:Date.now() }, n, btn, btn.textContent, true);
   };
   var dropMine = function(n){ saveMyStamp(n, null); var o = myStamps(); Object.keys(o).forEach(function(k){ if (k === n || myStamp(n) === o[k]) delete o[k]; }); ls('ms.stamps', o); ls('ms.tok', toks().filter(function(x){ return !(x.name === n || (p && x.name === p.name)); })); };
   var draw = function(note){
-    var n = nameOf(), mine = n ? myStamp(n) : null, card = p && tokFor(p.name), lib = p ? { st:p.st, sv:p.sv } : (dirOf(n) || {});
-    if (mine && lib.sv && (mine.regAt || 0) < lib.sv) { dropMine(n); mine = null; card = null; note = '主辦端已刪除或更新你的印章，手機上的舊印章已失效，請重新拍照建立。'; }
+    var n = nameOf(), mine = n ? myStamp(n) : null, card = p && tokFor(p.name), lib = p ? { st:p.st, sv:p.sv, stH:p.stH } : (dirOf(n) || {});
+    if (mine && lib.sv && (mine.regAt || mine.at || 0) < lib.sv - 2000 && !(lib.stH && imgHash(mine.img) === lib.stH)) { dropMine(n); mine = null; card = null; note = '主辦端已刪除或更新你的印章，手機上的舊印章已失效，請重新拍照建立。'; }
     var key = [n, mine ? mine.regAt || 1 : 0, card ? 1 : 0, lib.st ? 1 : 0, note || ''].join('|');
     if (box._key === key && box.innerHTML && !$('#stCam')) return; box._key = key;
     if (mine) {
@@ -493,7 +494,7 @@ function stampArea(p){
     $('#stSave').onclick = function(){
       var wmm = parseFloat($('#stW').value), hmm = parseFloat($('#stH').value);
       if (!(wmm >= 5 && wmm <= 120 && hmm >= 5 && hmm <= 120)) { $('#stMsg').textContent = '請輸入印章實際尺寸（5～120 mm）。'; return; }
-      var rec = { img:img, wmm:wmm, hmm:hmm, regAt:Date.now(), consentAt:nowROC() };
+      var nowT = Date.now(), rec = { img:img, wmm:wmm, hmm:hmm, regAt:nowT, at:nowT, consentAt:nowROC() };
       saveMyStamp(nameOf(), rec);
       send(rec, this);
     };
