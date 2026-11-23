@@ -497,6 +497,16 @@ function stampArea(p){
       $('#stNew').onclick = function(){ if (!confirm('這支手機將不再使用 QR 簽到卡，改為重新拍照註冊印章？')) return; dropTok(nameOf()); form(); };
       return;
     }
+    if (hasAuth(n)) {   // 已授權過的印章（存在主辦端印章庫）：任何手機輸入姓名＋燈號即可蓋章
+      box.innerHTML = '<div class="stampbox"><div class="row1"><b>🔴 ' + esc(n) + ' 已有授權的電子印章</b></div>' +
+        '<label class="cons"><input type="checkbox" id="stUse2" checked><span>我是本人（或經本人授權），同意本次以已授權的電子印章代替簽名。主辦端會以燈號核對。</span></label>' +
+        '<button class="btn seal" id="stAuth" style="width:100%">🔴 蓋我已授權的電子印章</button><button class="btn link" id="stOpen">改用手機重新拍照註冊印章</button></div>' +
+        '<p class="note" style="text-align:center;margin:0">或在下方手寫簽名</p>';
+      $('#stUse2').onchange = function(){ $('#stAuth').disabled = !this.checked; };
+      $('#stAuth').onclick = function(){ var q = getP() || { sid:null, name:n }; submit({ sid:q.sid || null, name:n, unit:unitOf(), useStamp:1, at:Date.now() }, n, this, this.textContent, true); };
+      $('#stOpen').onclick = function(){ form(); };
+      return;
+    }
     box.innerHTML = '<button class="btn seal" id="stOpen" style="width:100%">🔴 電子印章簽到（用手機拍印章）</button>' +
       ((getP() || {}).st || hasAuth(nameOf()) ? '<details class="note"><summary style="cursor:pointer;color:var(--accent)">我有電子印章 QR 簽到卡</summary><div style="display:flex;flex-direction:column;gap:8px;margin-top:8px"><span>請輸入卡片上的 12 碼代碼：</span><input id="stCode" maxlength="15" autocapitalize="characters" autocomplete="off" placeholder="例如 AB12 CD34 EF56" style="padding:12px 14px;border:1px solid #AEB8C7;border-radius:8px;font-size:1.05rem;letter-spacing:.08em;text-transform:uppercase"><button class="btn seal" id="stCodeGo">登錄並蓋章簽到</button></div></details>' : '') +
       '<p class="note" style="text-align:center;margin:0">或在下方手寫簽名</p>';
@@ -532,8 +542,9 @@ function stampArea(p){
       send(rec, this);
     };
   };
-  draw();
-  if (!p && $('#wName')) { var rd = function(){ if (document.body.contains(box) && !$('#stCam')) draw(); }; $('#wName').addEventListener('change', rd); $('#wName').addEventListener('input', function(){ clearTimeout(rd.t); rd.t = setTimeout(rd, 400); }); }
+  var stKey = function(){ var n = nameOf(); return [n, !!(n && myStamp(n)), !!(n && tokFor(n)), hasAuth(n)].join('|'); };
+  draw(); box.dataset.k = stKey();
+  if (!p && $('#wName')) { var rd = function(){ if (!document.body.contains(box) || $('#stCam')) return; var k = stKey(); if (box.dataset.k === k) return; box.dataset.k = k; draw(); };   /* 狀態沒變就不重畫，避免點按鈕時按鈕被換掉 */ $('#wName').addEventListener('change', rd); $('#wName').addEventListener('input', function(){ clearTimeout(rd.t); rd.t = setTimeout(rd, 400); }); }
 }
 
 /* ===== 手機填寫會議紀録 ===== */
