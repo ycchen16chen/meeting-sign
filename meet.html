@@ -260,7 +260,7 @@ function sign(_p, preName){
   var pre = findP(preName), mem = function(n){ return ls('ms.code.' + n) || ''; };
   $('#app').innerHTML = '<div class="card"><div class="step">步驟 2／2・科部：<b>' + esc(CUR_UNIT || CUR_DEP) + '</b> <a href="#" id="chDep">更改</a></div>' +
     '<label class="fld">姓名<input id="wName" autocomplete="name" list="nmList" value="' + esc(preName || '') + '" placeholder="請輸入姓名"></label>' +
-    '<datalist id="nmList">' + inDep.map(function(x){ return x.name; }).concat((D.dir || []).filter(function(x){ return x[3] === CUR_DEP || (CUR_UNIT && x[3] === CUR_UNIT); }).map(function(x){ return x[0]; })).filter(function(v, i, a){ return a.indexOf(v) === i; }).map(function(v){ return '<option value="' + esc(v) + '">'; }).join('') + '</datalist>' +
+    '<datalist id="nmList">' + inDep.map(function(x){ return x.name; }).concat((D.dir || []).filter(function(x){ var dn = function(s){ return String(s || '').replace(/^肺復原室$/, '肺復原'); }; return dn(x[3]) === dn(CUR_DEP) || (CUR_UNIT && dn(x[3]) === dn(CUR_UNIT)); }).map(function(x){ return x[0]; })).filter(function(v, i, a){ return a.indexOf(v) === i; }).map(function(v){ return '<option value="' + esc(v) + '">'; }).join('') + '</datalist>' +
     '<label class="fld">職稱<input id="fTitle" autocomplete="organization-title" placeholder="例如 醫師、護理長" value="' + esc(pre ? titleOf(pre) : '') + '"></label>' +
     '<label class="fld">燈號<input id="fCode" maxlength="8" autocapitalize="characters" autocomplete="off" placeholder="例：DOC1234A" style="text-transform:uppercase" value="' + esc(preName ? mem(preName) : (ls('ms.code._last') || '')) + '"></label>' +
     '<div id="stArea"></div>' +
@@ -365,7 +365,7 @@ function nowROC(){ var d = new Date(), p = function(n){ return String(n).padStar
 // 主辦人撤銷授權後，清除這支手機記住的印章與 QR 簽到卡
 function purgeRevoked(rv){
   if (!rv) return 0; var n = 0, o = myStamps();
-  Object.keys(o).forEach(function(k){ var t = rv[k] || Object.keys(rv).filter(function(x){ return x && k && (x.indexOf(k) === 0 || k.indexOf(x) === 0); }).map(function(x){ return rv[x]; })[0]; if (t && (+o[k].at || 0) <= t) { delete o[k]; n++; } });
+  Object.keys(o).forEach(function(k){ var t = rv[k] || Object.keys(rv).filter(function(x){ return x && k && (x.indexOf(k) === 0 || k.indexOf(x) === 0); }).map(function(x){ return rv[x]; })[0]; if (t && Math.max(+o[k].at || 0, +o[k].regAt || 0) <= t) { delete o[k]; n++; } });
   if (n) ls('ms.stamps', o);
   var T = toks(), T2 = T.filter(function(x){ var t = rv[x.name]; return !(t && (+x.at || 0) <= t); });
   if (T2.length !== T.length) { ls('ms.tok', T2); n += T.length - T2.length; }
@@ -377,7 +377,7 @@ function dropTok(name){ ls('ms.tok', toks().filter(function(x){ return !sameNm(x
 function imgHash(s){ s = String(s || ''); var h = 5381; for (var i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0; return (h >>> 0).toString(36) + s.length.toString(36); }
 function newTok(){ var a = new Uint8Array(12); try { crypto.getRandomValues(a); } catch(e){ for (var i = 0; i < 12; i++) a[i] = Math.random() * 256 | 0; } return Array.prototype.map.call(a, function(v){ return (v % 36).toString(36); }).join('').toUpperCase(); }
 // 主辦端在電腦上重拍了印章（圖不同且比較新）→ 清掉手機上的舊印章圖；同一顆印章不清除。印章代碼（ms.tok）保留，之後每場會議都能蓋章。
-function purgeStale(people){ var o = myStamps(), n = 0; (people || []).forEach(function(p){ if (!p.stAt) return; Object.keys(o).forEach(function(k){ if (!sameNm(k, p.name)) return; if (p.stH && imgHash(o[k].img) === p.stH) return; if (p.stH && (+o[k].at || 0) < p.stAt - 2000) { delete o[k]; n++; } }); }); if (n) ls('ms.stamps', o); return n; }
+function purgeStale(people){ var o = myStamps(), n = 0; (people || []).forEach(function(p){ if (!p.stAt) return; Object.keys(o).forEach(function(k){ if (!sameNm(k, p.name)) return; if (p.stH && imgHash(o[k].img) === p.stH) return; if (p.stH && Math.max(+o[k].at || 0, +o[k].regAt || 0) < p.stAt - 2000) { delete o[k]; n++; } }); }); if (n) ls('ms.stamps', o); return n; }
 function hasAuth(n){ return !!(n && D && Array.isArray(D.stNames) && D.stNames.some(function(x){ return sameNm(x, n); })); }
 function inkOk(src){ return new Promise(function(ok){ var im = new Image(); im.onload = function(){ try { var w = Math.min(240, im.naturalWidth || 1), hh = Math.max(1, Math.round(w * im.naturalHeight / im.naturalWidth)); var cv = document.createElement('canvas'); cv.width = w; cv.height = hh; var g = cv.getContext('2d'); g.drawImage(im, 0, 0, w, hh); var d = g.getImageData(0, 0, w, hh).data, n = 0; for (var i = 0; i < d.length; i += 4) if (d[i + 3] > 60 && d[i] + d[i + 1] + d[i + 2] < 660) n++; ok(n >= Math.max(12, w * hh * 0.0015)); } catch(e){ ok(true); } }; im.onerror = function(){ ok(false); }; im.src = src; }); }
 function myStamps(){ return ls('ms.stamps') || {}; }
