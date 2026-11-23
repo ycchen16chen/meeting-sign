@@ -169,7 +169,7 @@ var esc = function(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, fun
 var hhmm = function(t){ var d = new Date(t), p = function(n){ return String(n).padStart(2,'0'); }; return p(d.getHours()) + ':' + p(d.getMinutes()); };
 function ls(k, v){ try { if (v === undefined) { var r = localStorage.getItem(k); return r ? JSON.parse(r) : null; } localStorage.setItem(k, JSON.stringify(v)); } catch(e){ return null; } }
 var DEF_PROJECT = 'meeting-sign-2781e';
-var PAGE_VER = '1151123b';   // 與主辦端 MEET_VER 相同
+var PAGE_VER = '1151123c';   // 與主辦端 MEET_VER 相同
 try { var qv = new URLSearchParams(location.search).get('v'); if (qv && qv > PAGE_VER && sessionStorage.getItem('ms.rl') !== qv) { sessionStorage.setItem('ms.rl', qv); location.replace(location.pathname + '?v=' + qv + '&r=' + Date.now() + location.hash); return; } } catch(e){}
 var raw = (location.hash || '').slice(1), MK = null;
 function toks(){ return ls('ms.tok') || []; }
@@ -426,12 +426,12 @@ function stampArea(p){
   var unitOf = function(){ return p ? p.unit : ''; };
   var send = function(rec, btn){
     var n = nameOf(); if (!n) { $('#msg').textContent = '請先輸入姓名'; if ($('#wName')) $('#wName').focus(); return; }
-    submit({ sid:p ? p.sid : null, name:n, unit:unitOf(), stampImg:rec.img, wmm:rec.wmm, hmm:rec.hmm, regAt:rec.regAt || rec.at || 0, consentAt:rec.consentAt, consentText:CONSENT, at:Date.now() }, n, btn, btn.textContent, true);
+    submit({ sid:p ? p.sid : null, name:n, unit:unitOf(), stampImg:rec.img, wmm:rec.wmm, hmm:rec.hmm, regAt:Math.max(+rec.regAt || 0, +rec.at || 0), consentAt:rec.consentAt, consentText:CONSENT, at:Date.now() }, n, btn, btn.textContent, true);
   };
   var dropMine = function(n){ saveMyStamp(n, null); var o = myStamps(); Object.keys(o).forEach(function(k){ if (k === n || myStamp(n) === o[k]) delete o[k]; }); ls('ms.stamps', o); ls('ms.tok', toks().filter(function(x){ return !(x.name === n || (p && x.name === p.name)); })); };
   var draw = function(note){
     var n = nameOf(), mine = n ? myStamp(n) : null, card = p && tokFor(p.name), lib = p ? { st:p.st, sv:p.sv, stH:p.stH } : (dirOf(n) || {});
-    if (mine && lib.sv && (mine.regAt || mine.at || 0) < lib.sv - 2000 && !(lib.stH && imgHash(mine.img) === lib.stH)) { dropMine(n); mine = null; card = null; note = '主辦端已刪除或更新你的印章，手機上的舊印章已失效，請重新拍照建立。'; }
+    if (mine && lib.sv && Math.max(+mine.regAt || 0, +mine.at || 0) < lib.sv - 2000 && !(lib.stH && imgHash(mine.img) === lib.stH)) { dropMine(n); mine = null; card = null; note = '主辦端已刪除或更新你的印章，手機上的舊印章已失效，請重新拍照建立。'; }
     var key = [n, mine ? mine.regAt || 1 : 0, card ? 1 : 0, lib.st ? 1 : 0, note || ''].join('|');
     if (box._key === key && box.innerHTML && !$('#stCam')) return; box._key = key;
     if (mine) {
@@ -459,7 +459,7 @@ function stampArea(p){
         '<button class="btn link" id="stNew2">重新拍照註冊印章</button></div><p class="note" style="text-align:center;margin:0">或在下方手寫簽名</p>';
       box.querySelector('.cons b').textContent = n;
       $('#stUse').onchange = function(){ $('#stLib').disabled = !this.checked; };
-      $('#stLib').onclick = function(){ submit({ sid:p ? p.sid : null, name:n, unit:unitOf(), useLib:1, at:Date.now() }, n, this, this.textContent, true); };
+      $('#stLib').onclick = function(){ submit({ sid:p ? p.sid : null, name:n, unit:unitOf(), useLib:1, useStamp:1, at:Date.now() }, n, this, this.textContent, true); };
       $('#stNew2').onclick = function(){ form(); };
       return;
     }
