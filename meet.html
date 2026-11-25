@@ -263,7 +263,7 @@ function sign(_p, preName){
     '<datalist id="nmList">' + inDep.map(function(x){ return x.name; }).concat((D.dir || []).filter(function(x){ var dn = function(s){ return String(s || '').replace(/^肺復原室$/, '肺復原'); }; return dn(x[3]) === dn(CUR_DEP) || (CUR_UNIT && dn(x[3]) === dn(CUR_UNIT)); }).map(function(x){ return x[0]; })).filter(function(v, i, a){ return a.indexOf(v) === i; }).map(function(v){ return '<option value="' + esc(v) + '">'; }).join('') + '</datalist>' +
     '<label class="fld">職稱<input id="fTitle" autocomplete="organization-title" placeholder="例如 醫師、護理長" value="' + esc(pre ? titleOf(pre) : '') + '"></label>' +
     '<label class="fld">燈號<input id="fCode" maxlength="8" autocapitalize="characters" autocomplete="off" placeholder="例：DOC1234A" style="text-transform:uppercase" value="' + esc(preName ? mem(preName) : (ls('ms.code._last') || '')) + '"></label>' +
-    '<div id="stArea"></div>' +
+    '<div id="stArea"></div><div id="sigQuick"></div>' +
     '<div class="pad"><canvas id="cv"></canvas><div class="ph" id="ph">請用手指在框內簽名</div></div>' +
     '<p class="note err" id="msg"></p>' +
     '<div class="row"><button class="btn" id="back">返回</button><button class="btn" id="clr">清除</button><button class="btn seal" id="ok">確認簽到</button></div></div>';
@@ -289,7 +289,8 @@ function sign(_p, preName){
   $('#clr').onclick = function(){ ctx.clearRect(0, 0, cv.width, cv.height); drawn = false; $('#ph').hidden = false; };
   $('#back').onclick = list;
   $('#chDep').onclick = function(e){ e.preventDefault(); list(); };
-  stampArea(null);
+  stampArea(null); sigQuick();
+  $('#wName').addEventListener('change', sigQuick); $('#wName').addEventListener('input', function(){ clearTimeout(sigQuick.t); sigQuick.t = setTimeout(sigQuick, 400); });
   $('#ok').onclick = function(){
     var name = $('#wName').value.trim();
     if (!name) { $('#msg').textContent = '請輸入姓名'; return $('#wName').focus(); }
@@ -320,6 +321,7 @@ function submit(payload, name, btn, label, isStamp){
   try { e = CR.sealFor(D.pub, payload); } catch(err){ btn.disabled = false; btn.textContent = label; if (msg) msg.textContent = '加密失敗：' + err.message; return; }
   FS.add(PROJECT, COL_C, { m:MID, iv:e.iv, wk:e.wk, ct:e.ct, t:payload.at }).then(function(){
     var M = mine(); M.push({ name:name, at:payload.at }); ls('ms.signed.' + MID, M);
+    if (payload.sig) saveMySig(name, payload.sig);   /* 記住簽名，下次一鍵帶入 */
     window.scrollTo(0, 0);
     $('#app').innerHTML = '<div class="card done"><div class="stamp"><b>' + (isStamp ? '已蓋章' : '已簽到') + '</b></div><div class="nm" style="font-size:1.4rem">' + esc(name) + '</div><p class="note">' + (isStamp ? (payload.stampImg ? '已用你的電子印章完成簽到，資料已加密送出。' : '已送出電子印章簽到，主辦端驗證後會帶入你的印章。') : '簽到資料已加密送出，謝謝。') + '可以關閉這個頁面。</p><button class="btn" id="again" style="width:100%">查詢簽到狀況</button></div>';
     $('#again').onclick = function(){ showStatus(); };
@@ -380,6 +382,25 @@ function newTok(){ var a = new Uint8Array(12); try { crypto.getRandomValues(a); 
 function purgeStale(people){ var o = myStamps(), n = 0; (people || []).forEach(function(p){ if (!p.stAt) return; Object.keys(o).forEach(function(k){ if (!sameNm(k, p.name)) return; if (p.stH && imgHash(o[k].img) === p.stH) return; if (p.stH && Math.max(+o[k].at || 0, +o[k].regAt || 0) < p.stAt - 2000) { delete o[k]; n++; } }); }); if (n) ls('ms.stamps', o); return n; }
 function hasAuth(n){ return !!(n && D && Array.isArray(D.stNames) && D.stNames.some(function(x){ return sameNm(x, n); })); }
 function inkOk(src){ return new Promise(function(ok){ var im = new Image(); im.onload = function(){ try { var w = Math.min(240, im.naturalWidth || 1), hh = Math.max(1, Math.round(w * im.naturalHeight / im.naturalWidth)); var cv = document.createElement('canvas'); cv.width = w; cv.height = hh; var g = cv.getContext('2d'); g.drawImage(im, 0, 0, w, hh); var d = g.getImageData(0, 0, w, hh).data, n = 0; for (var i = 0; i < d.length; i += 4) if (d[i + 3] > 60 && d[i] + d[i + 1] + d[i + 2] < 660) n++; ok(n >= Math.max(12, w * hh * 0.0015)); } catch(e){ ok(true); } }; im.onerror = function(){ ok(false); }; im.src = src; }); }
+/* 手寫簽名：這支手機記住上次的簽名（ms.sigs），或主辦端已登記的簽名（以燈號核對）→ 一鍵帶入 */
+function mySigs(){ return ls('ms.sigs') || {}; }
+function mySig(n){ var o = mySigs(), k = Object.keys(o).find(function(x){ return sameNm(x, n); }); return k ? o[k] : null; }
+function saveMySig(n, img){ var o = mySigs(); o[n] = { img:img, at:Date.now() }; ls('ms.sigs', o); }
+function hasSigAuth(n){ return !!(n && D && Array.isArray(D.sigNames) && D.sigNames.some(function(x){ return sameNm(x, n); })); }
+function sigQuick(){
+  var box = $('#sigQuick'); if (!box) return;
+  var n = $('#wName') ? $('#wName').value.trim() : '', loc = n && mySig(n), auth = n && !loc && hasSigAuth(n);
+  var key = [n, !!loc, !!auth].join('|'); if (box.dataset.k === key) return; box.dataset.k = key;
+  if (!loc && !auth) { box.innerHTML = ''; return; }
+  box.innerHTML = '<div class="stampbox"><div class="row1"><b>✍ ' + (loc ? '帶入你上次的簽名' : esc(n) + ' 已有登記的簽名') + '</b>' + (loc ? '<img class="stp" alt="上次的簽名" src="' + loc.img + '" style="height:44px;background:#fff">' : '') + '</div>' +
+    '<button class="btn seal" id="sigGo" style="width:100%">✍ 一鍵帶入我的簽名' + (auth ? '（以燈號核對）' : '') + '</button>' +
+    '<p class="note" style="margin:0">按下即表示同意以這份簽名代替本次親簽；要重新簽名請直接在下方簽。</p></div>';
+  $('#sigGo').onclick = function(){
+    var fx = findP(n), base = { sid:fx ? fx.sid : null, name:n, unit:fx ? fx.unit : '', at:Date.now() };
+    if (loc) base.sig = loc.img; else base.useSig = 1;
+    submit(base, n, this, this.textContent, false);
+  };
+}
 function myStamps(){ return ls('ms.stamps') || {}; }
 function myStamp(name){ var o = myStamps(); if (o[name]) return o[name]; var k = Object.keys(o).find(function(x){ return x && name && (x.indexOf(name) === 0 || name.indexOf(x) === 0); }); return k ? o[k] : null; }
 function saveMyStamp(name, rec){ var o = myStamps(); if (rec) o[name] = rec; else delete o[name]; ls('ms.stamps', o); }
