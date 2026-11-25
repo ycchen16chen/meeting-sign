@@ -120,7 +120,7 @@ var FS = {
   base: function (p) { return 'https://firestore.googleapis.com/v1/projects/' + encodeURIComponent(p) + '/databases/(default)/documents'; },
   toF: function (o) { var f = {}; Object.keys(o).forEach(function (k) { var v = o[k]; f[k] = typeof v === 'number' ? { integerValue: String(Math.round(v)) } : { stringValue: String(v) }; }); return f; },
   fromF: function (f) { var o = {}; Object.keys(f || {}).forEach(function (k) { var v = f[k]; o[k] = 'integerValue' in v ? Number(v.integerValue) : 'stringValue' in v ? v.stringValue : null; }); return o; },
-  err: function (r) { return r.text().then(function (t) { var m = t; try { m = JSON.parse(t).error.message; } catch (e) {} throw new Error('雲端回應 ' + r.status + '：' + String(m).slice(0, 160)); }); },
+  err: function (r) { return r.text().then(function (t) { var m = t; try { m = JSON.parse(t).error.message; } catch (e) {} if (r.status === 429) throw new Error('雲端回應 429：今天的免費用量已用完（約台灣時間下午 4 點自動恢復）。'); throw new Error('雲端回應 ' + r.status + '：' + String(m).slice(0, 160)); }); },
   add: function (p, col, data) {
     return fetch(FS.base(p) + '/' + col, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields: FS.toF(data) }) })
       .then(function (r) { return r.ok ? r.json() : FS.err(r); });
@@ -130,6 +130,30 @@ var FS = {
     return fetch(FS.base(p) + ':runQuery', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(q) })
       .then(function (r) { return r.ok ? r.json() : FS.err(r); })
       .then(function (a) { return (a || []).filter(function (x) { return x.document; }).map(function (x) { var o = FS.fromF(x.document.fields); o._id = x.document.name.split('/').pop(); return o; }); });
+  },
+  /* 省雲端讀取量：文件編號 = 會議編號_13位時間_亂碼，可用編號範圍只讀需要的那幾筆（不需另建索引） */
+  newId: function (prefix) { return prefix + '_' + ('0000000000000' + Date.now()).slice(-13) + '_' + Math.random().toString(36).slice(2, 8); },
+  idTime: function (id) { var m = /_(\d{13})_[0-9a-z]*$/.exec(id || ''); return m ? +m[1] : 0; },
+  addId: function (p, col, data, prefix) {
+    return fetch(FS.base(p) + '/' + col + '?documentId=' + encodeURIComponent(FS.newId(prefix)), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields: FS.toF(data) }) })
+      .then(function (r) { if (r.ok) return r.json(); if (r.status === 429) return FS.err(r); return FS.add(p, col, data); });
+  },
+  range: function (p, col, prefix, fromT, limit, desc) {
+    var ref = function (id) { return { referenceValue: 'projects/' + p + '/databases/(default)/documents/' + col + '/' + id }; };
+    var lo = prefix + '_' + (fromT > 0 ? ('0000000000000' + Math.floor(fromT)).slice(-13) : ''), hi = prefix + '_~';
+    var q = { structuredQuery: { from: [{ collectionId: col }], where: { compositeFilter: { op: 'AND', filters: [
+      { fieldFilter: { field: { fieldPath: '__name__' }, op: 'GREATER_THAN_OR_EQUAL', value: ref(lo) } },
+      { fieldFilter: { field: { fieldPath: '__name__' }, op: 'LESS_THAN', value: ref(hi) } }] } },
+      orderBy: [{ field: { fieldPath: '__name__' }, direction: desc ? 'DESCENDING' : 'ASCENDING' }], limit: limit || 300 } };
+    return fetch(FS.base(p) + ':runQuery', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(q) })
+      .then(function (r) { return r.ok ? r.json() : FS.err(r); })
+      .then(function (a) { return (a || []).filter(function (x) { return x.document; }).map(function (x) { var o = FS.fromF(x.document.fields); o._id = x.document.name.split('/').pop(); return o; }); });
+  },
+  /* 最新一版（名單／會議紀錄）：只讀 1 筆；舊格式文件才退回讀全部 */
+  latest: function (p, col, mid) {
+    var pick = function (docs) { return docs.filter(function (d) { return d.m === mid; }).sort(function (a, b) { return ((b.rev || 0) - (a.rev || 0)) || ((b.t || 0) - (a.t || 0)); }); };
+    return FS.range(p, col, mid, 0, 1, true).then(function (d) { return d.length ? pick(d) : FS.byMeeting(p, col, mid).then(pick); },
+      function (e) { if (/ 429/.test(e.message)) throw e; return FS.byMeeting(p, col, mid).then(pick); });
   }
 };
 
@@ -194,7 +218,7 @@ function fail(msg){ $('#title').textContent = '無法開啟簽到'; $('#app').in
 if (!window.forge) return fail('加密元件載入失敗，請確認手機已連上網路後重新整理。');
 if (!/^m[0-9a-f]{16}$/.test(MID || '') || !/^[0-9a-f]{32}$/.test(K || '') || (MK !== null && !/^[0-9a-f]{32}$/.test(MK))) return fail('連結不完整。');
 
-FS.byMeeting(PROJECT, COL_R, MID).then(function(docs){
+FS.latest(PROJECT, COL_R, MID).then(function(docs){
   if (!docs.length) throw new Error('找不到這場會議的名單，可能主辦人尚未發布。');
   var last = docs.sort(function(a, b){ return (b.rev - a.rev) || ((b.t || 0) - (a.t || 0)); })[0];
   D = CR.aesDec(CR.hex2bytes(K), last);
@@ -263,7 +287,7 @@ function list(){
 var SIGTH = null;
 function loadSigThumbs(){   // 主辦端發布的簽名檔小圖（以會議金鑰加密）
   if (SIGTH) return SIGTH;
-  SIGTH = FS.byMeeting(PROJECT, COL_R, MID + '.sig').then(function(docs){
+  SIGTH = FS.latest(PROJECT, COL_R, MID + '.sig').then(function(docs){
     if (!docs.length) return {};
     var last = docs.sort(function(a, b){ return (b.t || 0) - (a.t || 0); })[0];
     try { return (CR.aesDec(CR.hex2bytes(K), last) || {}).list || {}; } catch(e){ return {}; }
@@ -445,7 +469,7 @@ function submit(payload, name, btn, label, isStamp){
   btn.disabled = true; btn.textContent = '加密送出中…'; var msg = $('#msg'); if (msg) msg.textContent = '';
   var e;
   try { e = CR.sealFor(D.pub, payload); } catch(err){ btn.disabled = false; btn.textContent = label; if (msg) msg.textContent = '加密失敗：' + err.message; return; }
-  FS.add(PROJECT, COL_C, { m:MID, iv:e.iv, wk:e.wk, ct:e.ct, t:payload.at }).then(function(){
+  FS.addId(PROJECT, COL_C, { m:MID, iv:e.iv, wk:e.wk, ct:e.ct, t:payload.at }, MID).then(function(){
     var M = mine(); M.push({ name:name, at:payload.at }); ls('ms.signed.' + MID, M);
     if (payload.sig && payload.sigAuth) saveMySig(name, payload.sig);   /* 本人授權後才記住簽名，下次一鍵帶入 */
     if (CUR_CODE) saveQuick({ name:name, dep:CUR_DEP || '', unit:CUR_UNIT || '', title:payload.title || '', code:CUR_CODE, at:Date.now() });   /* 下次掃 QR 顯示「快速一鍵簽到」 */
@@ -461,7 +485,7 @@ function submit(payload, name, btn, label, isStamp){
 function showStatus(){
   window.scrollTo(0, 0);
   $('#app').innerHTML = '<div class="card"><p class="note">讀取簽到狀況中…</p></div>';
-  FS.byMeeting(PROJECT, COL_R, MID).then(function(docs){
+  FS.latest(PROJECT, COL_R, MID).then(function(docs){
     var last = docs.sort(function(a, b){ return (b.rev - a.rev) || ((b.t || 0) - (a.t || 0)); })[0]; if (!last) throw new Error('找不到會議資料');
     var S = CR.aesDec(CR.hex2bytes(K), last), P = S.people || [], walk = S.walk || [];
     var signed = P.filter(function(p){ return p.signed; }), not = P.filter(function(p){ return !p.signed; });
@@ -734,7 +758,7 @@ var CN = ['','一','二','三','四','五','六','七','八','九','十'];
 var cnNum = function(n){ return n<=10?CN[n]:n<20?'十'+CN[n-10]:CN[Math.floor(n/10)]+'十'+CN[n%10]; };
 var FLD = [['discussion','說明／討論','ta'],['decision','決議','ta'],['owner','負責單位／人','in'],['due','完成期限','in']];
 function loadDraft(){
-  return FS.byMeeting(PROJECT, COL_D, MID).then(function(docs){
+  return FS.latest(PROJECT, COL_D, MID).then(function(docs){
     if (!docs.length) return false;
     var last = docs.sort(function(a, b){ return (b.rev - a.rev) || ((b.t || 0) - (a.t || 0)); })[0];
     if (last.rev <= drev) return false;
@@ -790,7 +814,7 @@ function send(){
   if (notesDirty) payload.notes = MD.notes;
   var e; try { e = CR.sealFor(D.pub, payload); } catch(err){ $('#st').textContent = '加密失敗：' + err.message; return; }
   var snapD = dirty, snapN = notesDirty; dirty = {}; notesDirty = false; sending = true; status();
-  FS.add(PROJECT, COL_M, { m:MID, iv:e.iv, wk:e.wk, ct:e.ct, t:Date.now() }).then(function(){ sending = false; lastSent = Date.now(); persist(); status(); })
+  FS.addId(PROJECT, COL_M, { m:MID, iv:e.iv, wk:e.wk, ct:e.ct, t:Date.now() }, MID).then(function(){ sending = false; lastSent = Date.now(); persist(); status(); })
     .catch(function(err){ sending = false; Object.keys(snapD).forEach(function(k){ dirty[k] = true; }); notesDirty = notesDirty || snapN; persist(); $('#st').textContent = '送出失敗，稍後自動重試（' + err.message + '）'; sendTimer = setTimeout(send, 8000); });
 }
 function refresh(){
