@@ -32,6 +32,7 @@ input[type=search],.fld input{width:100%;padding:12px 14px;border:1px solid #AEB
 .row{display:flex;gap:10px}.row .btn{flex:1}
 .deps{display:grid;grid-template-columns:1fr 1fr;gap:10px}.deps .dep{min-height:56px;font-size:1.1rem;font-weight:700}
 .deps .dep.on{border:2px solid var(--seal);color:var(--seal)}
+.btn:disabled{opacity:.45;cursor:not-allowed}
 .otherbox:not([hidden]){display:flex;flex-direction:column;gap:8px}
 .step{font-size:.85rem;color:var(--muted)}.step b{color:var(--ink)}.step a{margin-left:6px}
 .card{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:16px;display:flex;flex-direction:column;gap:12px}
@@ -248,31 +249,79 @@ function list(){
     var n = $('#nm0').value.trim(); if (!n) { $('#nmMsg').textContent = '請輸入姓名'; return $('#nm0').focus(); }
     var p = findP(n), d = dirOf(n), q = (ls('ms.quick') || []).find(function(x){ return x.name === n; });
     var dep = (q && q.dep) || ls('ms.dep.' + n) || (p && (guessDep(p) || p.dep)) || (d && d[3]) || '', L = depList();
-    if (q && q.unit && q.dep === '其他部科') { CUR_DEP = '其他部科'; CUR_UNIT = q.unit; return sign(null, n); }
-    if (dep && L.indexOf(dep) >= 0) { CUR_DEP = dep; CUR_UNIT = ''; return sign(null, n); }
-    if (dep && L.indexOf('其他部科') >= 0) { CUR_DEP = '其他部科'; CUR_UNIT = dep; return sign(null, n); }
-    depPicker(n);
+    /* 輸入姓名後一律顯示科別，曾選過的科別預先標示 */
+    var pd = '', pu = '';
+    if (q && q.unit && q.dep === '其他部科') { pd = '其他部科'; pu = q.unit; }
+    else if (dep && L.indexOf(dep) >= 0) pd = dep;
+    else if (dep) { pd = '其他部科'; pu = dep; }
+    depPicker(n, pd, pu);
   };
   $('#nmGo').onclick = go;
   $('#nm0').addEventListener('keydown', function(e){ if (e.key === 'Enter') go(); });
 }
-function depPicker(nm){
+/* 輸入姓名後：曾有簽名檔的人，先詢問是否（授權）帶入曾經使用的簽名檔 */
+var SIGTH = null;
+function loadSigThumbs(){   // 主辦端發布的簽名檔小圖（以會議金鑰加密）
+  if (SIGTH) return SIGTH;
+  SIGTH = FS.byMeeting(PROJECT, COL_R, MID + '.sig').then(function(docs){
+    if (!docs.length) return {};
+    var last = docs.sort(function(a, b){ return (b.t || 0) - (a.t || 0); })[0];
+    try { return (CR.aesDec(CR.hex2bytes(K), last) || {}).list || {}; } catch(e){ return {}; }
+  }).catch(function(){ SIGTH = null; return {}; });
+  return SIGTH;
+}
+function thumbFor(L, n){ var k = Object.keys(L || {}).find(function(x){ return sameNm(x, n); }); return k ? L[k] : ''; }
+function afterName(n){
+  if (!n) return sign(null, '');
+  var loc = mySig(n), auth = !loc && hasSigAuth(n), cand = !loc && !auth && hasSigCand(n);
+  if (!loc && !auth && !cand) return sign(null, n);
   window.scrollTo(0, 0);
+  var d = dirOf(n), code = ls('ms.code.' + n) || (d && d[2]) || '';
+  $('#app').innerHTML = '<div class="card" style="border:2px solid var(--seal)">' +
+    '<div class="step">科別：<b>' + esc(CUR_UNIT || CUR_DEP || '') + '</b></div>' +
+    '<h2 style="margin:0;font-size:1.25rem">' + esc(n) + '，' + (cand ? '找到你曾經使用過的簽名檔' : '你有已授權的簽名檔') + '</h2>' +
+    '<div id="askImg" style="min-height:72px;display:flex;align-items:center">' + (loc ? '<img alt="曾經的簽名檔" src="' + loc.img + '" style="height:72px;width:auto;border:1px solid var(--line);border-radius:6px;background:#fff">' : '<span class="note">載入曾經的簽名檔…</span>') + '</div>' +
+    '<p style="margin:0;font-weight:700;font-size:1.1rem">' + (cand ? '是否授權帶入曾經使用的簽名檔簽到？' : '是否帶入上次的簽名檔簽到？') + '</p>' +
+    (cand ? '<label class="cons"><input type="checkbox" id="askOk"> <span>' + esc('本人同意授權主辦單位保存我的簽名圖檔，之後的會議簽到可一鍵帶入使用，效力等同本人親簽；可隨時撤銷。') + '</span></label>' : '') +
+    '<label class="fld">燈號（核對本人）<input id="fCode" maxlength="8" autocapitalize="characters" autocomplete="off" style="text-transform:uppercase" value="' + esc(code) + '" placeholder="例：DOC1234A"></label>' +
+    '<p class="note err" id="msg"></p>' +
+    '<button class="btn seal" id="askYes" style="width:100%"' + (cand ? ' disabled' : '') + '>✔ 是，' + (cand ? '授權並帶入簽名檔簽到' : '帶入簽名檔簽到') + '</button>' +
+    '<button class="btn" id="askNo" style="width:100%">否，我要自己簽名</button></div>';
+  if (!loc) loadSigThumbs().then(function(L){ var t = thumbFor(L, n), box = $('#askImg'); if (!box) return; box.innerHTML = t ? '<img alt="曾經的簽名檔" src="' + t + '" style="height:72px;width:auto;border:1px solid var(--line);border-radius:6px;background:#fff">' : '<span class="note">（無法顯示簽名檔預覽）</span>'; });
+  if (cand) $('#askOk').onchange = function(){ $('#askYes').disabled = !this.checked; };
+  $('#askNo').onclick = function(){ sign(null, n); };
+  $('#askYes').onclick = function(){
+    var fx = findP(n), pl = { sid:fx ? fx.sid : null, name:n, unit:CUR_UNIT || CUR_DEP || (fx ? fx.unit : ''), at:Date.now() };
+    if (loc) { pl.sig = loc.img; pl.sigAuth = 1; pl.sigConsentAt = loc.consentAt || nowROC(); }
+    else { pl.useSig = 1; if (cand) { pl.sigAuth = 1; pl.sigConsentAt = nowROC(); } }
+    submit(pl, n, this, this.textContent, false);
+  };
+}
+var FIX_OTHER = ['品管中心'];   // 「其他」底下的固定選項
+function depPicker(nm, pd, pu){
+  window.scrollTo(0, 0);
+  if (pd == null) { pd = CUR_DEP; pu = CUR_UNIT; }
+  var isOn = function(d, u){ return d === '其他部科' ? (pd === '其他部科' && (u ? pu === u : (!!pu && FIX_OTHER.indexOf(pu) < 0))) : pd === d; };
+  var btn = function(d, u, label){ var on = isOn(d, u); return '<button class="btn dep' + (on ? ' on' : '') + '" data-d="' + esc(d) + '"' + (u ? ' data-u="' + esc(u) + '"' : '') + '>' + (on ? '✓ ' : '') + esc(label) + '</button>'; };
+  var main = depList().filter(function(d){ return d !== '其他部科'; });
+  var others = FIX_OTHER.map(function(u){ return btn('其他部科', u, '其他：' + u); }).join('') + btn('其他部科', '', '其他：自填' + (pd === '其他部科' && pu && FIX_OTHER.indexOf(pu) < 0 ? '（' + pu + '）' : ''));
   $('#app').innerHTML =
-    '<div class="card"><div class="step">' + esc(nm || '') + '</div><h2 style="margin:0;font-size:1.2rem">請選擇隸屬科部</h2>' +
-    '<div class="deps">' + depList().map(function(d){ return '<button class="btn dep" data-d="' + esc(d) + '">' + esc(d) + '</button>'; }).join('') + '</div>' +
-    '<div id="otherBox" class="otherbox" hidden><label class="fld">其他部科：請輸入你的科部<input id="otherDep" maxlength="20" autocomplete="off" placeholder="例如 放射線部、復健部" value="' + esc(ls('ms.otherDep') || '') + '"></label>' +
+    '<div class="card"><div class="step">' + esc(nm || '') + '</div><h2 style="margin:0;font-size:1.2rem">請選擇科別</h2>' +
+    (pd ? '<p class="note" style="margin:0">已標示你上次的科別，確認無誤請直接點選</p>' : '') +
+    '<div class="deps">' + main.map(function(d){ return btn(d, '', d); }).join('') + others + '</div>' +
+    '<div id="otherBox" class="otherbox" hidden><label class="fld">其他：請輸入你的科別<input id="otherDep" maxlength="20" autocomplete="off" placeholder="例如 放射線部、復健部" value="' + esc((pd === '其他部科' && pu && FIX_OTHER.indexOf(pu) < 0 ? pu : '') || ls('ms.otherDep') || '') + '"></label>' +
     '<p class="note err" id="otherMsg" style="margin:0"></p><button class="btn seal" id="otherGo" style="width:100%">下一步</button></div>' +
     '<div class="row"><button class="btn" id="dpBack">返回</button></div></div>';
   $('#dpBack').onclick = list;
   document.querySelectorAll('.dep').forEach(function(b){ b.onclick = function(){
     document.querySelectorAll('.dep').forEach(function(x){ x.classList.toggle('on', x === b); });
-    if (b.dataset.d === '其他部科') { $('#otherBox').hidden = false; $('#otherDep').focus(); return; }   // 其他部科：自己填科部名稱
-    $('#otherBox').hidden = true; CUR_DEP = b.dataset.d; CUR_UNIT = ''; sign(null, nm || ''); }; });
+    if (b.dataset.d === '其他部科' && b.dataset.u) { CUR_DEP = '其他部科'; CUR_UNIT = b.dataset.u; return afterName(nm || ''); }   // 其他：品管中心
+    if (b.dataset.d === '其他部科') { $('#otherBox').hidden = false; $('#otherDep').focus(); return; }   // 其他：自填
+    $('#otherBox').hidden = true; CUR_DEP = b.dataset.d; CUR_UNIT = ''; afterName(nm || ''); }; });
   $('#otherGo').onclick = function(){
     var u = $('#otherDep').value.trim().slice(0, 20);
-    if (!u) { $('#otherMsg').textContent = '請輸入科部名稱'; $('#otherDep').focus(); return; }
-    ls('ms.otherDep', u); CUR_DEP = '其他部科'; CUR_UNIT = u; sign(null, nm || ''); };
+    if (!u) { $('#otherMsg').textContent = '請輸入科別名稱'; $('#otherDep').focus(); return; }
+    ls('ms.otherDep', u); CUR_DEP = '其他部科'; CUR_UNIT = u; afterName(nm || ''); };
   $('#otherDep').addEventListener('keydown', function(e){ if (e.key === 'Enter') $('#otherGo').click(); });
 
 }
@@ -282,7 +331,7 @@ function sign(_p, preName){
   window.scrollTo(0, 0);
   var inDep = (D.people || []).filter(function(x){ return x.dep === CUR_DEP || guessDep(x) === CUR_DEP; });
   var pre = findP(preName), mem = function(n){ return ls('ms.code.' + n) || ''; };
-  $('#app').innerHTML = '<div class="card"><div class="step">科部：<b>' + esc(CUR_UNIT || CUR_DEP) + '</b> <a href="#" id="chDep">更改</a></div>' +
+  $('#app').innerHTML = '<div class="card"><div class="step">科別：<b>' + esc(CUR_UNIT || CUR_DEP) + '</b> <a href="#" id="chDep">更改</a></div>' +
     '<label class="fld">姓名<input id="wName" autocomplete="name" list="nmList" value="' + esc(preName || '') + '" placeholder="請輸入姓名"></label>' +
     '<datalist id="nmList">' + inDep.map(function(x){ return x.name; }).concat((D.dir || []).filter(function(x){ var dn = function(s){ return String(s || '').replace(/^肺復原室$/, '肺復原'); }; return dn(x[3]) === dn(CUR_DEP) || (CUR_UNIT && dn(x[3]) === dn(CUR_UNIT)); }).map(function(x){ return x[0]; })).filter(function(v, i, a){ return a.indexOf(v) === i; }).map(function(v){ return '<option value="' + esc(v) + '">'; }).join('') + '</datalist>' +
     '<label class="fld">職稱<input id="fTitle" autocomplete="organization-title" placeholder="例如 醫師、護理長" value="' + esc(pre ? titleOf(pre) : '') + '"></label>' +
@@ -459,7 +508,7 @@ function newTok(){ var a = new Uint8Array(12); try { crypto.getRandomValues(a); 
 // 主辦端在電腦上重拍了印章（圖不同且比較新）→ 清掉手機上的舊印章圖；同一顆印章不清除。印章代碼（ms.tok）保留，之後每場會議都能蓋章。
 function purgeStale(people){ var o = myStamps(), n = 0; (people || []).forEach(function(p){ if (!p.stAt) return; Object.keys(o).forEach(function(k){ if (!sameNm(k, p.name)) return; if (p.stH && imgHash(o[k].img) === p.stH) return; if (p.stH && Math.max(+o[k].at || 0, +o[k].regAt || 0) < p.stAt - 2000) { delete o[k]; n++; } }); }); if (n) ls('ms.stamps', o); return n; }
 function hasAuth(n){ return !!(n && D && Array.isArray(D.stNames) && D.stNames.some(function(x){ return sameNm(x, n); })); }
-function inkOk(src){ return new Promise(function(ok){ var im = new Image(); im.onload = function(){ try { var w = Math.min(240, im.naturalWidth || 1), hh = Math.max(1, Math.round(w * im.naturalHeight / im.naturalWidth)); var cv = document.createElement('canvas'); cv.width = w; cv.height = hh; var g = cv.getContext('2d'); g.drawImage(im, 0, 0, w, hh); var d = g.getImageData(0, 0, w, hh).data, n = 0; for (var i = 0; i < d.length; i += 4) if (d[i + 3] > 60 && d[i] + d[i + 1] + d[i + 2] < 660) n++; ok(n >= Math.max(12, w * hh * 0.0015)); } catch(e){ ok(true); } }; im.onerror = function(){ ok(false); }; im.src = src; }); }
+function inkOk(src){ return new Promise(function(ok){ var im = new Image(); im.onload = function(){ try { var w = Math.min(240, im.naturalWidth || 1), hh = Math.max(1, Math.round(w * im.naturalHeight / im.naturalWidth)); var cv = document.createElement('canvas'); cv.width = w; cv.height = hh; var g = cv.getContext('2d'); g.drawImage(im, 0, 0, w, hh); var d = g.getImageData(0, 0, w, hh).data, n = 0; for (var i = 0; i < d.length; i += 4) if (d[i + 3] > 60 && d[i] + d[i + 1] + d[i + 2] < 660) n++; ok(n >= Math.max(6, w * hh * 0.0004)); } catch(e){ ok(true); } }; im.onerror = function(){ ok(false); }; im.src = src; }); }
 /* 手寫簽名：這支手機記住上次的簽名（ms.sigs），或主辦端已登記的簽名（以燈號核對）→ 一鍵帶入 */
 function prepSigFile(file){   // 上傳的簽名圖片：裁掉空白、白底、縮成簽名大小
   return new Promise(function(ok, no){
